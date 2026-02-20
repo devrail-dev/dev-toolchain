@@ -1,0 +1,11 @@
+# DevRail dev-toolchain CODEOWNERS
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Workflow files require review from maintainers
+.github/ @devrail-dev/maintainers
+
+# Dockerfile changes require review from maintainers
+Dockerfile @devrail-dev/maintainers
+
+# Shared libraries require review from maintainers
+lib/ @devrail-dev/maintainers

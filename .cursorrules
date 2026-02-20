@@ -1,0 +1,27 @@
+This project follows DevRail development standards.
+See DEVELOPMENT.md for the complete reference.
+
+Critical Rules:
+
+1. Run `make check` before completing any story or task. Never mark work done
+   without passing checks. This is the single gate for all linting, formatting,
+   security, and test validation.
+2. Use conventional commits. Every commit message follows the
+   `type(scope): description` format. No exceptions.
+3. Never install tools outside the container. All linters, formatters, scanners,
+   and test runners live inside `ghcr.io/devrail-dev/dev-toolchain:v1`. The
+   Makefile delegates to Docker. Do not install tools on the host.
+4. Respect `.editorconfig`. Never override formatting rules (indent style, line
+   endings, trailing whitespace) without explicit instruction.
+5. Write idempotent scripts. Every script must be safe to re-run. Check before
+   acting: `command -v tool || install_tool`, `mkdir -p`, guard file writes with
+   existence checks.
+6. Use the shared logging library. No raw `echo` for status messages. Use
+   `log_info`, `log_warn`, `log_error`, `log_debug`, and `die` from
+   `lib/log.sh`.
+
+Quick Reference:
+
+- Run `make check` to validate all standards
+- Run `make help` to see available targets
+- All tools run inside the dev-toolchain container
