@@ -1,0 +1,148 @@
+name: Build and Publish Container
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  schedule:
+    # Run every Monday at 6:00 AM UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/devrail-dev/dev-toolchain
+
+jobs:
+  # Auto-version bump for scheduled and manual builds
+  auto-version:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next patch version
+        id: bump
+        run: |
+          # Get the latest semver tag
+          LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+
+          if [ -z "${LATEST_TAG}" ]; then
+            NEW_TAG="v1.0.0"
+            echo "No existing tags found, starting at ${NEW_TAG}"
+          else
+            # Parse components
+            MAJOR=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f1)
+            MINOR=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f2)
+            PATCH=$(echo "${LATEST_TAG}" | sed 's/v//' | cut -d. -f3)
+
+            # Increment patch
+            NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            echo "Bumping ${LATEST_TAG} -> ${NEW_TAG}"
+          fi
+
+          echo "new_tag=${NEW_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push new tag
+        run: |
+          NEW_TAG="${{ steps.bump.outputs.new_tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${NEW_TAG}"
+          git push origin "${NEW_TAG}"
+
+  # Build and push the container image
+  build-and-push:
+    needs: [auto-version]
+    if: always() && (needs.auto-version.result == 'success' || needs.auto-version.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine tag for build
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ needs.auto-version.outputs.new_tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU for multi-arch
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }}
+            type=semver,pattern=v{{major}},value=${{ steps.tag.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/devrail-dev/dev-toolchain
+            org.opencontainers.image.description=DevRail developer toolchain container
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Notify on failure
+  notify-failure:
+    needs: [build-and-push]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Create issue on build failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Build failed: ${new Date().toISOString().split('T')[0]}`;
+            const body = [
+              'The container build failed.',
+              '',
+              `**Trigger:** ${context.eventName}`,
+              `**Workflow run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'Please investigate and fix the build.',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['build-failure', 'automated']
+            });

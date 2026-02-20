@@ -1,0 +1,518 @@
+# DevRail dev-toolchain Makefile — Two-Layer Delegation Pattern
+#
+# This Makefile implements the DevRail contract for the dev-toolchain container
+# repo itself. Public targets run on the host and delegate to the dev-toolchain
+# Docker container. Internal targets (prefixed with _) run inside the container.
+#
+# Usage:
+#   make              Show available targets (help)
+#   make build        Build the container image locally
+#   make check        Run all checks (lint, format, test, security, scan, docs)
+#   make lint         Run all linters
+#   DEVRAIL_FAIL_FAST=1 make check   Stop on first failure
+#
+# Configuration is read from .devrail.yml at project root.
+
+# ---------------------------------------------------------------------------
+# Variables (overridable via environment)
+# ---------------------------------------------------------------------------
+DEVRAIL_IMAGE      ?= ghcr.io/devrail-dev/dev-toolchain
+DEVRAIL_TAG        ?= local
+DEVRAIL_FAIL_FAST  ?= 0
+DEVRAIL_LOG_FORMAT ?= json
+
+DOCKER_RUN := docker run --rm \
+	-v "$$(pwd):/workspace" \
+	-w /workspace \
+	-e DEVRAIL_FAIL_FAST=$(DEVRAIL_FAIL_FAST) \
+	-e DEVRAIL_LOG_FORMAT=$(DEVRAIL_LOG_FORMAT) \
+	$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)
+
+.DEFAULT_GOAL := help
+
+# ---------------------------------------------------------------------------
+# .devrail.yml language detection (runs inside container where yq is available)
+# ---------------------------------------------------------------------------
+DEVRAIL_CONFIG := .devrail.yml
+LANGUAGES      := $(shell yq '.languages[]' $(DEVRAIL_CONFIG) 2>/dev/null)
+HAS_PYTHON     := $(filter python,$(LANGUAGES))
+HAS_BASH       := $(filter bash,$(LANGUAGES))
+HAS_TERRAFORM  := $(filter terraform,$(LANGUAGES))
+HAS_ANSIBLE    := $(filter ansible,$(LANGUAGES))
+
+# ---------------------------------------------------------------------------
+# .PHONY declarations
+# ---------------------------------------------------------------------------
+.PHONY: help build lint format test security scan docs check install-hooks
+.PHONY: _lint _format _test _security _scan _docs _check _check-config
+
+# ===========================================================================
+# Public targets (run on host, delegate to Docker container)
+# ===========================================================================
+
+help: ## Show this help
+	@echo "DevRail dev-toolchain — container image build and validation"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build the container image locally
+	docker build -t $(DEVRAIL_IMAGE):$(DEVRAIL_TAG) .
+
+check: ## Run all checks (lint, format, test, security, scan, docs)
+	$(DOCKER_RUN) make _check
+
+docs: ## Generate documentation
+	$(DOCKER_RUN) make _docs
+
+format: ## Run all formatters
+	$(DOCKER_RUN) make _format
+
+install-hooks: ## Install pre-commit hooks
+	@if ! command -v python3 >/dev/null 2>&1; then \
+		echo "Error: Python 3 is required to install pre-commit. Install Python 3 and try again."; \
+		exit 2; \
+	fi
+	@if ! git rev-parse --git-dir >/dev/null 2>&1; then \
+		echo "Error: Not in a git repository. Run 'git init' first."; \
+		exit 2; \
+	fi
+	@if ! command -v pre-commit >/dev/null 2>&1; then \
+		echo "Installing pre-commit..."; \
+		if command -v pipx >/dev/null 2>&1; then \
+			pipx install pre-commit; \
+		else \
+			pip install --user pre-commit; \
+		fi; \
+	fi
+	@pre-commit install
+	@pre-commit install --hook-type commit-msg
+	@echo "Pre-commit hooks installed successfully. Hooks will run on every commit."
+
+lint: ## Run all linters
+	$(DOCKER_RUN) make _lint
+
+scan: ## Run universal scanners (trivy, gitleaks)
+	$(DOCKER_RUN) make _scan
+
+security: ## Run language-specific security scanners
+	$(DOCKER_RUN) make _security
+
+test: ## Run validation tests
+	$(DOCKER_RUN) make _test
+
+# ===========================================================================
+# Internal targets (run inside container — do NOT invoke directly)
+#
+# These targets are invoked by the public targets above via Docker.
+# They read .devrail.yml to determine which language-specific tools to run.
+# All internal targets follow the run-all-report-all pattern by default,
+# switching to fail-fast when DEVRAIL_FAIL_FAST=1 is set.
+#
+# Exit codes:
+#   0 — pass (all tools succeeded or skipped)
+#   1 — failure (one or more tools reported issues)
+#   2 — misconfiguration (missing .devrail.yml, missing tools, etc.)
+#
+# Each internal target emits a JSON summary line to stdout:
+#   {"target":"<name>","status":"pass|fail|skip","duration_ms":<N>}
+# ===========================================================================
+
+_check-config:
+	@if [ ! -f "$(DEVRAIL_CONFIG)" ]; then \
+		echo '{"target":"config","status":"error","error":"missing .devrail.yml","exit_code":2}'; \
+		exit 2; \
+	fi
+
+# --- _lint: language-specific linting ---
+_lint: _check-config
+	@start_time=$$(date +%s%3N); \
+	overall_exit=0; \
+	ran_languages=""; \
+	failed_languages=""; \
+	if [ -n "$(HAS_PYTHON)" ]; then \
+		ran_languages="$${ran_languages}\"python\","; \
+		ruff check . || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_BASH)" ]; then \
+		ran_languages="$${ran_languages}\"bash\","; \
+		sh_files=$$(find . -name '*.sh' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$sh_files" ]; then \
+			echo "$$sh_files" | xargs shellcheck || { overall_exit=1; failed_languages="$${failed_languages}\"bash\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping bash lint: no .sh files found","language":"bash"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_TERRAFORM)" ]; then \
+		ran_languages="$${ran_languages}\"terraform\","; \
+		tf_dirs=$$(find . -name '*.tf' -not -path './.git/*' -not -path './.terraform/*' 2>/dev/null | xargs -I{} dirname {} | sort -u); \
+		if [ -n "$$tf_dirs" ]; then \
+			for dir in $$tf_dirs; do \
+				(cd "$$dir" && tflint) || { overall_exit=1; failed_languages="$${failed_languages}\"terraform\","; }; \
+			done; \
+		else \
+			echo '{"level":"info","msg":"skipping terraform lint: no .tf files found","language":"terraform"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_ANSIBLE)" ]; then \
+		ran_languages="$${ran_languages}\"ansible\","; \
+		ansible-lint || { overall_exit=1; failed_languages="$${failed_languages}\"ansible\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ $$overall_exit -eq 0 ]; then \
+		echo "{\"target\":\"lint\",\"status\":\"pass\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}]}"; \
+	else \
+		echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+	fi; \
+	exit $$overall_exit
+
+# --- _format: language-specific format checking ---
+_format: _check-config
+	@start_time=$$(date +%s%3N); \
+	overall_exit=0; \
+	ran_languages=""; \
+	failed_languages=""; \
+	if [ -n "$(HAS_PYTHON)" ]; then \
+		ran_languages="$${ran_languages}\"python\","; \
+		ruff format --check . || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_BASH)" ]; then \
+		ran_languages="$${ran_languages}\"bash\","; \
+		sh_files=$$(find . -name '*.sh' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$sh_files" ]; then \
+			echo "$$sh_files" | xargs shfmt -d || { overall_exit=1; failed_languages="$${failed_languages}\"bash\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping bash format: no .sh files found","language":"bash"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_TERRAFORM)" ]; then \
+		ran_languages="$${ran_languages}\"terraform\","; \
+		terraform fmt -check -recursive || { overall_exit=1; failed_languages="$${failed_languages}\"terraform\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_ANSIBLE)" ]; then \
+		ran_languages="$${ran_languages}\"ansible\","; \
+		echo '{"target":"format","language":"ansible","status":"skip","reason":"no formatter configured"}' >&2; \
+	fi; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ $$overall_exit -eq 0 ]; then \
+		echo "{\"target\":\"format\",\"status\":\"pass\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}]}"; \
+	else \
+		echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+	fi; \
+	exit $$overall_exit
+
+# --- _test: language-specific test runners ---
+_test: _check-config
+	@start_time=$$(date +%s%3N); \
+	overall_exit=0; \
+	ran_languages=""; \
+	failed_languages=""; \
+	skipped_languages=""; \
+	if [ -n "$(HAS_PYTHON)" ]; then \
+		if [ -d "tests" ] || find . -name '*_test.py' -o -name 'test_*.py' 2>/dev/null | grep -q .; then \
+			ran_languages="$${ran_languages}\"python\","; \
+			pytest || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"python\","; \
+			echo '{"level":"info","msg":"skipping python tests: no test files found","language":"python"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_BASH)" ]; then \
+		if find . -name '*.bats' -not -path './.git/*' 2>/dev/null | grep -q .; then \
+			ran_languages="$${ran_languages}\"bash\","; \
+			bats $$(find . -name '*.bats' -not -path './.git/*') || { overall_exit=1; failed_languages="$${failed_languages}\"bash\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"bash\","; \
+			echo '{"level":"info","msg":"skipping bash tests: no .bats files found","language":"bash"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_TERRAFORM)" ]; then \
+		if find . -name '*_test.go' -not -path './.git/*' 2>/dev/null | grep -q .; then \
+			ran_languages="$${ran_languages}\"terraform\","; \
+			(cd tests && go test ./...) || { overall_exit=1; failed_languages="$${failed_languages}\"terraform\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"terraform\","; \
+			echo '{"level":"info","msg":"skipping terraform tests: no *_test.go files found","language":"terraform"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_ANSIBLE)" ]; then \
+		if [ -d "molecule" ]; then \
+			ran_languages="$${ran_languages}\"ansible\","; \
+			molecule test || { overall_exit=1; failed_languages="$${failed_languages}\"ansible\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"ansible\","; \
+			echo '{"level":"info","msg":"skipping ansible tests: no molecule directory found","language":"ansible"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ -z "$${ran_languages}" ] && [ -n "$${skipped_languages}" ]; then \
+		echo "{\"target\":\"test\",\"status\":\"skip\",\"reason\":\"no tests found\",\"duration_ms\":$$duration,\"skipped\":[$${skipped_languages%,}]}"; \
+	elif [ $$overall_exit -eq 0 ]; then \
+		echo "{\"target\":\"test\",\"status\":\"pass\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+	else \
+		echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+	fi; \
+	exit $$overall_exit
+
+# --- _security: language-specific security scanners ---
+_security: _check-config
+	@start_time=$$(date +%s%3N); \
+	overall_exit=0; \
+	ran_languages=""; \
+	failed_languages=""; \
+	skipped_languages=""; \
+	if [ -n "$(HAS_PYTHON)" ]; then \
+		ran_languages="$${ran_languages}\"python\","; \
+		bandit -r . -q || { overall_exit=1; failed_languages="$${failed_languages}\"python:bandit\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+		semgrep --config auto . --quiet 2>/dev/null || { overall_exit=1; failed_languages="$${failed_languages}\"python:semgrep\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_BASH)" ]; then \
+		skipped_languages="$${skipped_languages}\"bash\","; \
+		echo '{"level":"info","msg":"skipping bash security: no language-specific scanner","language":"bash"}' >&2; \
+	fi; \
+	if [ -n "$(HAS_TERRAFORM)" ]; then \
+		ran_languages="$${ran_languages}\"terraform\","; \
+		tfsec . || { overall_exit=1; failed_languages="$${failed_languages}\"terraform:tfsec\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+		checkov -d . --quiet || { overall_exit=1; failed_languages="$${failed_languages}\"terraform:checkov\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_ANSIBLE)" ]; then \
+		skipped_languages="$${skipped_languages}\"ansible\","; \
+		echo '{"level":"info","msg":"skipping ansible security: no language-specific scanner","language":"ansible"}' >&2; \
+	fi; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ -z "$${ran_languages}" ] && [ -n "$${skipped_languages}" ]; then \
+		echo "{\"target\":\"security\",\"status\":\"skip\",\"reason\":\"no security scanners for declared languages\",\"duration_ms\":$$duration,\"skipped\":[$${skipped_languages%,}]}"; \
+	elif [ $$overall_exit -eq 0 ]; then \
+		echo "{\"target\":\"security\",\"status\":\"pass\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+	else \
+		echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+	fi; \
+	exit $$overall_exit
+
+# --- _scan: universal vulnerability and secret scanning ---
+_scan: _check-config
+	@start_time=$$(date +%s%3N); \
+	overall_exit=0; \
+	failed_scanners=""; \
+	trivy fs --format json --output /tmp/trivy-results.json . 2>/dev/null; \
+	trivy_exit=$$?; \
+	if [ $$trivy_exit -eq 1 ]; then \
+		overall_exit=1; \
+		failed_scanners="$${failed_scanners}\"trivy\","; \
+	elif [ $$trivy_exit -gt 1 ]; then \
+		echo "{\"target\":\"scan\",\"status\":\"error\",\"error\":\"trivy exited with code $$trivy_exit\",\"exit_code\":2}"; \
+		exit 2; \
+	fi; \
+	if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+		end_time=$$(date +%s%3N); \
+		duration=$$((end_time - start_time)); \
+		echo "{\"target\":\"scan\",\"status\":\"fail\",\"duration_ms\":$$duration,\"scanners\":[\"trivy\",\"gitleaks\"],\"failed\":[$${failed_scanners%,}]}"; \
+		exit $$overall_exit; \
+	fi; \
+	gitleaks detect --source . --report-format json --report-path /tmp/gitleaks-results.json 2>/dev/null; \
+	gitleaks_exit=$$?; \
+	if [ $$gitleaks_exit -eq 1 ]; then \
+		overall_exit=1; \
+		failed_scanners="$${failed_scanners}\"gitleaks\","; \
+	elif [ $$gitleaks_exit -gt 1 ]; then \
+		echo "{\"target\":\"scan\",\"status\":\"error\",\"error\":\"gitleaks exited with code $$gitleaks_exit\",\"exit_code\":2}"; \
+		exit 2; \
+	fi; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ $$overall_exit -eq 0 ]; then \
+		echo "{\"target\":\"scan\",\"status\":\"pass\",\"duration_ms\":$$duration,\"scanners\":[\"trivy\",\"gitleaks\"]}"; \
+	else \
+		echo "{\"target\":\"scan\",\"status\":\"fail\",\"duration_ms\":$$duration,\"scanners\":[\"trivy\",\"gitleaks\"],\"failed\":[$${failed_scanners%,}]}"; \
+	fi; \
+	exit $$overall_exit
+
+# --- _docs: documentation generation ---
+_docs: _check-config
+	@start_time=$$(date +%s%3N); \
+	overall_exit=0; \
+	modules=""; \
+	if [ -n "$(HAS_TERRAFORM)" ]; then \
+		tf_dirs=$$(find . -name '*.tf' -not -path './.git/*' -not -path './.terraform/*' 2>/dev/null | xargs -I{} dirname {} | sort -u); \
+		if [ -n "$$tf_dirs" ]; then \
+			for dir in $$tf_dirs; do \
+				terraform-docs markdown table --output-file README.md "$$dir" || overall_exit=1; \
+				modules="$${modules}\"$$dir\","; \
+			done; \
+		else \
+			echo '{"level":"info","msg":"skipping terraform-docs: no .tf files found","language":"terraform"}' >&2; \
+		fi; \
+	fi; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ -z "$(HAS_TERRAFORM)" ]; then \
+		echo "{\"target\":\"docs\",\"status\":\"skip\",\"reason\":\"no docs targets configured\",\"duration_ms\":$$duration}"; \
+	elif [ $$overall_exit -eq 0 ]; then \
+		echo "{\"target\":\"docs\",\"status\":\"pass\",\"duration_ms\":$$duration,\"modules\":[$${modules%,}]}"; \
+	else \
+		echo "{\"target\":\"docs\",\"status\":\"fail\",\"duration_ms\":$$duration,\"modules\":[$${modules%,}]}"; \
+	fi; \
+	exit $$overall_exit
+
+# --- _check: orchestrate all targets ---
+_check: _check-config
+	@overall_exit=0; \
+	overall_start=$$(date +%s%3N); \
+	results=""; \
+	passed=""; \
+	failed=""; \
+	skipped=""; \
+	for target in lint format test security scan docs; do \
+		target_start=$$(date +%s%3N); \
+		json_output=$$($(MAKE) _$${target} 2>/dev/null); \
+		target_exit=$$?; \
+		target_end=$$(date +%s%3N); \
+		target_duration=$$((target_end - target_start)); \
+		status=$$(echo "$$json_output" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4); \
+		if [ -z "$$status" ]; then \
+			if [ $$target_exit -eq 0 ]; then status="pass"; \
+			elif [ $$target_exit -eq 2 ]; then status="error"; \
+			else status="fail"; fi; \
+		fi; \
+		results="$${results}{\"target\":\"$$target\",\"status\":\"$$status\",\"duration_ms\":$$target_duration},"; \
+		case "$$status" in \
+			pass) passed="$${passed}\"$$target\","; ;; \
+			fail|error) \
+				failed="$${failed}\"$$target\","; \
+				if [ $$target_exit -eq 2 ]; then overall_exit=2; \
+				elif [ $$overall_exit -ne 2 ]; then overall_exit=1; fi; \
+				;; \
+			skip) skipped="$${skipped}\"$$target\","; ;; \
+		esac; \
+		if [ "$(DEVRAIL_LOG_FORMAT)" = "human" ]; then \
+			case "$$status" in \
+				pass) printf '\033[32m%-12s PASS   %s\033[0m\n' "$$target" "$${target_duration}ms" >&2; ;; \
+				fail|error) printf '\033[31m%-12s FAIL   %s\033[0m\n' "$$target" "$${target_duration}ms" >&2; ;; \
+				skip) printf '\033[33m%-12s SKIP   %s\033[0m\n' "$$target" "$${target_duration}ms" >&2; ;; \
+			esac; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$target_exit -ne 0 ]; then \
+			for remaining in lint format test security scan docs; do \
+				found=0; \
+				for done_target in lint format test security scan docs; do \
+					if [ "$$done_target" = "$$target" ]; then found=1; break; fi; \
+					if [ "$$done_target" = "$$remaining" ]; then break; fi; \
+				done; \
+			done; \
+			break; \
+		fi; \
+	done; \
+	overall_end=$$(date +%s%3N); \
+	overall_duration=$$((overall_end - overall_start)); \
+	if [ "$(DEVRAIL_LOG_FORMAT)" = "human" ]; then \
+		echo "=========================================" >&2; \
+		echo "DevRail Check Summary" >&2; \
+		echo "=========================================" >&2; \
+		if [ $$overall_exit -eq 0 ]; then \
+			printf '\033[32mResult: PASS  Total: %sms\033[0m\n' "$$overall_duration" >&2; \
+		else \
+			printf '\033[31mResult: FAIL  Total: %sms\033[0m\n' "$$overall_duration" >&2; \
+		fi; \
+		echo "=========================================" >&2; \
+	fi; \
+	if [ $$overall_exit -eq 0 ]; then \
+		check_status="pass"; \
+	else \
+		check_status="fail"; \
+	fi; \
+	echo "{\"target\":\"check\",\"status\":\"$$check_status\",\"duration_ms\":$$overall_duration,\"results\":[$${results%,}],\"passed\":[$${passed%,}],\"failed\":[$${failed%,}],\"skipped\":[$${skipped%,}]}"; \
+	exit $$overall_exit
