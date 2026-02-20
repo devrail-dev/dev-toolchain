@@ -1,0 +1,11 @@
+# DevRail project configuration
+# See: https://devrail.dev/docs/standards/devrail-yml-schema/
+
+languages:
+  - bash
+
+# Log format: json (default) or human
+# log_format: json
+
+# Fail on first error: false (default) or true
+# fail_fast: false

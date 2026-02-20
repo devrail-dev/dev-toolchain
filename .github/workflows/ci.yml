@@ -1,0 +1,84 @@
+name: CI Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  IMAGE_NAME: ghcr.io/devrail-dev/dev-toolchain
+  IMAGE_TAG: local
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Phase 1: Build the image
+      - name: Build container image
+        run: docker build -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+
+      # Phase 2: Self-validate with make check
+      - name: Run make check (shellcheck + shfmt)
+        run: |
+          docker run --rm \
+            -v "$(pwd):/workspace" \
+            -w /workspace \
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            make _check
+
+      # Phase 3: Security scans
+      - name: Run trivy image scan (table output)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          format: table
+
+      - name: Run trivy image scan (SARIF output)
+        uses: aquasecurity/trivy-action@0.28.0
+        if: always()
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-results.sarif
+
+      - name: Upload SARIF results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Run gitleaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Image signing placeholder — actual signing should be added to build.yml
+  # when images are published to GHCR. CI builds are local-only and not pushed,
+  # so signing here has no effect. This job serves as documentation of the
+  # intended cosign verification workflow.
+  sign-image:
+    needs: [build-and-validate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note on image signing
+        run: |
+          echo "Image signing is performed during the build workflow (build.yml)"
+          echo "when images are published to GHCR. CI only builds locally."
+          echo ""
+          echo "Consumers can verify published images with:"
+          echo "  cosign verify \\"
+          echo "    --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+          echo "    --certificate-identity-regexp 'github.com/devrail-dev/dev-toolchain' \\"
+          echo "    ghcr.io/devrail-dev/dev-toolchain:v1"
