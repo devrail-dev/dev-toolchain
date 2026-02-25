@@ -1,5 +1,7 @@
 # dev-toolchain
 
+> **Beta** -- DevRail is under active development. Standards, tooling, and container contents may change without notice. See [STABILITY.md](STABILITY.md) for details on what is ready and what is still in progress.
+
 DevRail developer toolchain container image — a single Docker image containing all linters, formatters, security scanners, and test runners for Python, Bash, Terraform, and Ansible projects.
 
 [![Build](https://github.com/devrail-dev/dev-toolchain/actions/workflows/build.yml/badge.svg)](https://github.com/devrail-dev/dev-toolchain/actions/workflows/build.yml)
