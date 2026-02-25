@@ -22,6 +22,7 @@
 #   require_cmd "cmd" "msg" - Exit 2 if command not found
 
 # Guard against double-sourcing
+# shellcheck disable=SC2317
 if [[ -n "${_DEVRAIL_LOG_LOADED:-}" ]]; then
   return 0 2>/dev/null || true
 fi
@@ -84,11 +85,11 @@ _log_human() {
   local prefix
 
   case "${level}" in
-    info)  prefix="[INFO]  " ;;
-    warn)  prefix="[WARN]  " ;;
-    error) prefix="[ERROR] " ;;
-    debug) prefix="[DEBUG] " ;;
-    *)     prefix="[${level^^}] " ;;
+  info) prefix="[INFO]  " ;;
+  warn) prefix="[WARN]  " ;;
+  error) prefix="[ERROR] " ;;
+  debug) prefix="[DEBUG] " ;;
+  *) prefix="[${level^^}] " ;;
   esac
 
   printf '%s%s\n' "${prefix}" "${msg}" >&2
@@ -102,12 +103,12 @@ _log() {
   local exit_code="${3:-}"
 
   case "${DEVRAIL_LOG_FORMAT}" in
-    human)
-      _log_human "${level}" "${msg}"
-      ;;
-    *)
-      _log_json "${level}" "${msg}" "${exit_code}"
-      ;;
+  human)
+    _log_human "${level}" "${msg}"
+    ;;
+  *)
+    _log_json "${level}" "${msg}" "${exit_code}"
+    ;;
   esac
 }
 

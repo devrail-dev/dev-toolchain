@@ -56,15 +56,15 @@ else
 
   # Map architecture names for trivy release artifacts
   case "${ARCH}" in
-    amd64) TRIVY_ARCH="64bit" ;;
-    arm64) TRIVY_ARCH="ARM64" ;;
-    *)     TRIVY_ARCH="${ARCH}" ;;
+  amd64) TRIVY_ARCH="64bit" ;;
+  arm64) TRIVY_ARCH="ARM64" ;;
+  *) TRIVY_ARCH="${ARCH}" ;;
   esac
 
   case "${OS}" in
-    linux)  TRIVY_OS="Linux" ;;
-    darwin) TRIVY_OS="macOS" ;;
-    *)      TRIVY_OS="${OS}" ;;
+  linux) TRIVY_OS="Linux" ;;
+  darwin) TRIVY_OS="macOS" ;;
+  *) TRIVY_OS="${OS}" ;;
   esac
 
   # Fetch latest trivy version from GitHub releases

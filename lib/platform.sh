@@ -14,6 +14,7 @@
 #   get_os     - Prints normalized OS name (linux or darwin)
 
 # Guard against double-sourcing
+# shellcheck disable=SC2317
 if [[ -n "${_DEVRAIL_PLATFORM_LOADED:-}" ]]; then
   return 0 2>/dev/null || true
 fi
@@ -51,15 +52,15 @@ get_arch() {
   local arch
   arch="$(uname -m)"
   case "${arch}" in
-    x86_64 | amd64)
-      printf "amd64"
-      ;;
-    aarch64 | arm64)
-      printf "arm64"
-      ;;
-    *)
-      printf "%s" "${arch}"
-      ;;
+  x86_64 | amd64)
+    printf "amd64"
+    ;;
+  aarch64 | arm64)
+    printf "arm64"
+    ;;
+  *)
+    printf "%s" "${arch}"
+    ;;
   esac
 }
 
@@ -69,14 +70,14 @@ get_os() {
   local os
   os="$(uname -s)"
   case "${os}" in
-    Linux)
-      printf "linux"
-      ;;
-    Darwin)
-      printf "darwin"
-      ;;
-    *)
-      printf "%s" "${os}"
-      ;;
+  Linux)
+    printf "linux"
+    ;;
+  Darwin)
+    printf "darwin"
+    ;;
+  *)
+    printf "%s" "${os}"
+    ;;
   esac
 }

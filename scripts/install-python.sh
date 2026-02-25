@@ -52,17 +52,11 @@ if ! command -v pip3 &>/dev/null && ! command -v pip &>/dev/null; then
   python3 -m ensurepip --upgrade 2>/dev/null || true
 fi
 
-# Determine pip command
-PIP_CMD="pip3"
-if ! command -v pip3 &>/dev/null; then
-  PIP_CMD="pip"
-fi
-
 # Upgrade pip
 log_info "Upgrading pip"
-python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null \
-  || python3 -m pip install --upgrade pip 2>/dev/null \
-  || true
+python3 -m pip install --upgrade pip --break-system-packages 2>/dev/null ||
+  python3 -m pip install --upgrade pip 2>/dev/null ||
+  true
 
 # Install Python tools via pip (idempotent)
 readonly PYTHON_TOOLS=(
@@ -78,8 +72,8 @@ for tool in "${PYTHON_TOOLS[@]}"; do
     log_info "${tool} is already installed, skipping"
   else
     log_info "Installing ${tool}"
-    python3 -m pip install --break-system-packages "${tool}" 2>/dev/null \
-      || python3 -m pip install "${tool}"
+    python3 -m pip install --break-system-packages "${tool}" 2>/dev/null ||
+      python3 -m pip install "${tool}"
   fi
 done
 

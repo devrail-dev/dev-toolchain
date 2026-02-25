@@ -54,8 +54,8 @@ if command -v ansible-lint &>/dev/null; then
   log_info "ansible-lint is already installed, skipping"
 else
   log_info "Installing ansible-lint (will pull ansible-core as dependency)"
-  python3 -m pip install --break-system-packages ansible-lint 2>/dev/null \
-    || python3 -m pip install ansible-lint
+  python3 -m pip install --break-system-packages ansible-lint 2>/dev/null ||
+    python3 -m pip install ansible-lint
   log_info "ansible-lint installed successfully"
 fi
 
@@ -64,8 +64,8 @@ if command -v molecule &>/dev/null; then
   log_info "molecule is already installed, skipping"
 else
   log_info "Installing molecule"
-  python3 -m pip install --break-system-packages molecule 2>/dev/null \
-    || python3 -m pip install molecule
+  python3 -m pip install --break-system-packages molecule 2>/dev/null ||
+    python3 -m pip install molecule
   log_info "molecule installed successfully"
 fi
 

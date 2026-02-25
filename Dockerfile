@@ -1,8 +1,9 @@
 # === Builder stage: Go-based tools ===
 # Compiles Go-based tools (shfmt, tflint, tfsec, terraform-docs, trivy, gitleaks)
-FROM golang:1.22-bookworm AS go-builder
+FROM golang:1.24-bookworm AS go-builder
 
 ARG TARGETARCH
+ENV GOTOOLCHAIN=auto
 
 # Install shfmt
 RUN go install mvdan.cc/sh/v3/cmd/shfmt@latest

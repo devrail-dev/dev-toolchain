@@ -1,0 +1,3 @@
+# ShellCheck configuration for dev-toolchain
+# Allow shellcheck to follow source directives from any script location
+source-path=SCRIPTDIR

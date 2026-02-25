@@ -39,7 +39,7 @@ check_tool() {
     return
   fi
 
-  if ${tool} ${version_flag} &>/dev/null; then
+  if "${tool}" "${version_flag}" &>/dev/null; then
     log_info "${tool} — OK"
   else
     log_error "${tool} found but failed to execute ${version_flag}"

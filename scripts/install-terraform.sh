@@ -79,8 +79,8 @@ if command -v checkov &>/dev/null; then
 else
   log_info "Installing checkov via pip"
   require_cmd "python3" "python3 is required but not found"
-  python3 -m pip install --break-system-packages checkov 2>/dev/null \
-    || python3 -m pip install checkov
+  python3 -m pip install --break-system-packages checkov 2>/dev/null ||
+    python3 -m pip install checkov
   log_info "checkov installed successfully"
 fi
 
