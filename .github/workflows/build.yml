@@ -100,7 +100,7 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}},value=${{ steps.tag.outputs.tag }}
-            type=semver,pattern={{major}},value=${{ steps.tag.outputs.tag }}
+            type=semver,pattern=v{{major}},value=${{ steps.tag.outputs.tag }}
           labels: |
             org.opencontainers.image.source=https://github.com/devrail-dev/dev-toolchain
             org.opencontainers.image.description=DevRail developer toolchain container
