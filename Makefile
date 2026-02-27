@@ -40,6 +40,7 @@ HAS_BASH       := $(filter bash,$(LANGUAGES))
 HAS_TERRAFORM  := $(filter terraform,$(LANGUAGES))
 HAS_ANSIBLE    := $(filter ansible,$(LANGUAGES))
 HAS_RUBY       := $(filter ruby,$(LANGUAGES))
+HAS_GO         := $(filter go,$(LANGUAGES))
 
 # ---------------------------------------------------------------------------
 # .PHONY declarations
@@ -207,6 +208,21 @@ _lint: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_GO)" ]; then \
+		ran_languages="$${ran_languages}\"go\","; \
+		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$go_files" ]; then \
+			golangci-lint run ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping go lint: no .go files found","language":"go"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -268,6 +284,21 @@ _format: _check-config
 			rubocop --check --fail-level error . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping ruby format: no .rb files found","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_GO)" ]; then \
+		ran_languages="$${ran_languages}\"go\","; \
+		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$go_files" ]; then \
+			gofumpt -d . || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping go format: no .go files found","language":"go"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -367,6 +398,21 @@ _test: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_GO)" ]; then \
+		if find . -name '*_test.go' -not -path './.git/*' -not -path './vendor/*' 2>/dev/null | grep -q .; then \
+			ran_languages="$${ran_languages}\"go\","; \
+			go test ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"go\","; \
+			echo '{"level":"info","msg":"skipping go tests: no *_test.go files found","language":"go"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ -z "$${ran_languages}" ] && [ -n "$${skipped_languages}" ]; then \
@@ -444,6 +490,21 @@ _security: _check-config
 			bundler-audit check || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:bundler-audit\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping bundler-audit: no Gemfile.lock found","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_GO)" ]; then \
+		if [ -f "go.sum" ]; then \
+			ran_languages="$${ran_languages}\"go\","; \
+			govulncheck ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go:govulncheck\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"go\","; \
+			echo '{"level":"info","msg":"skipping govulncheck: no go.sum found","language":"go"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \

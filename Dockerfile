@@ -20,6 +20,15 @@ RUN go install github.com/terraform-docs/terraform-docs@latest
 # Install gitleaks
 RUN go install github.com/zricethezav/gitleaks/v8@latest
 
+# Install golangci-lint v2
+RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+# Install gofumpt
+RUN go install mvdan.cc/gofumpt@latest
+
+# Install govulncheck
+RUN go install golang.org/x/vuln/cmd/govulncheck@latest
+
 # === Final stage ===
 FROM debian:bookworm-slim AS runtime
 
@@ -66,12 +75,18 @@ COPY scripts/ /opt/devrail/scripts/
 ENV PATH="/opt/devrail/bin:/usr/local/go/bin:${PATH}"
 ENV DEVRAIL_LIB="/opt/devrail/lib"
 
+# Copy Go SDK from builder (required at runtime by golangci-lint, govulncheck)
+COPY --from=go-builder /usr/local/go /usr/local/go
+
 # Copy Go-built binaries from builder
 COPY --from=go-builder /go/bin/shfmt /usr/local/bin/shfmt
 COPY --from=go-builder /go/bin/tflint /usr/local/bin/tflint
 COPY --from=go-builder /go/bin/tfsec /usr/local/bin/tfsec
 COPY --from=go-builder /go/bin/terraform-docs /usr/local/bin/terraform-docs
 COPY --from=go-builder /go/bin/gitleaks /usr/local/bin/gitleaks
+COPY --from=go-builder /go/bin/golangci-lint /usr/local/bin/golangci-lint
+COPY --from=go-builder /go/bin/gofumpt /usr/local/bin/gofumpt
+COPY --from=go-builder /go/bin/govulncheck /usr/local/bin/govulncheck
 
 # Run per-language install scripts
 RUN bash /opt/devrail/scripts/install-python.sh
@@ -79,6 +94,7 @@ RUN bash /opt/devrail/scripts/install-bash.sh
 RUN bash /opt/devrail/scripts/install-terraform.sh
 RUN bash /opt/devrail/scripts/install-ansible.sh
 RUN bash /opt/devrail/scripts/install-ruby.sh
+RUN bash /opt/devrail/scripts/install-go.sh
 RUN bash /opt/devrail/scripts/install-universal.sh
 
 WORKDIR /workspace
