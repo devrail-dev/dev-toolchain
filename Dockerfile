@@ -41,6 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    ruby \
+    ruby-dev \
+    build-essential \
     shellcheck \
     unzip \
     wget \
@@ -75,6 +78,7 @@ RUN bash /opt/devrail/scripts/install-python.sh
 RUN bash /opt/devrail/scripts/install-bash.sh
 RUN bash /opt/devrail/scripts/install-terraform.sh
 RUN bash /opt/devrail/scripts/install-ansible.sh
+RUN bash /opt/devrail/scripts/install-ruby.sh
 RUN bash /opt/devrail/scripts/install-universal.sh
 
 WORKDIR /workspace

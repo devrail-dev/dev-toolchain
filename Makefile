@@ -39,6 +39,7 @@ HAS_PYTHON     := $(filter python,$(LANGUAGES))
 HAS_BASH       := $(filter bash,$(LANGUAGES))
 HAS_TERRAFORM  := $(filter terraform,$(LANGUAGES))
 HAS_ANSIBLE    := $(filter ansible,$(LANGUAGES))
+HAS_RUBY       := $(filter ruby,$(LANGUAGES))
 
 # ---------------------------------------------------------------------------
 # .PHONY declarations
@@ -182,6 +183,30 @@ _lint: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_RUBY)" ]; then \
+		ran_languages="$${ran_languages}\"ruby\","; \
+		rb_files=$$(find . -name '*.rb' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$rb_files" ]; then \
+			rubocop . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:rubocop\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping ruby rubocop lint: no .rb files found","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+		if [ -n "$$rb_files" ]; then \
+			reek . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:reek\","; }; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -235,6 +260,21 @@ _format: _check-config
 	if [ -n "$(HAS_ANSIBLE)" ]; then \
 		ran_languages="$${ran_languages}\"ansible\","; \
 		echo '{"target":"format","language":"ansible","status":"skip","reason":"no formatter configured"}' >&2; \
+	fi; \
+	if [ -n "$(HAS_RUBY)" ]; then \
+		ran_languages="$${ran_languages}\"ruby\","; \
+		rb_files=$$(find . -name '*.rb' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$rb_files" ]; then \
+			rubocop --check --fail-level error . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping ruby format: no .rb files found","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
 	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
@@ -312,6 +352,21 @@ _test: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_RUBY)" ]; then \
+		if [ -d "spec" ]; then \
+			ran_languages="$${ran_languages}\"ruby\","; \
+			rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"ruby\","; \
+			echo '{"level":"info","msg":"skipping ruby tests: no spec/ directory found","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ -z "$${ran_languages}" ] && [ -n "$${skipped_languages}" ]; then \
@@ -371,6 +426,31 @@ _security: _check-config
 	if [ -n "$(HAS_ANSIBLE)" ]; then \
 		skipped_languages="$${skipped_languages}\"ansible\","; \
 		echo '{"level":"info","msg":"skipping ansible security: no language-specific scanner","language":"ansible"}' >&2; \
+	fi; \
+	if [ -n "$(HAS_RUBY)" ]; then \
+		ran_languages="$${ran_languages}\"ruby\","; \
+		if [ -f "config/application.rb" ]; then \
+			brakeman -q || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:brakeman\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping brakeman: not a Rails application","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+		if [ -f "Gemfile.lock" ]; then \
+			bundler-audit check || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:bundler-audit\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping bundler-audit: no Gemfile.lock found","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
 	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \

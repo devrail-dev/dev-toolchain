@@ -17,7 +17,7 @@ DevRail is in **beta** (`v0.x`). The project is under active development. This d
 | **Makefile contract** | Beta | Two-layer delegation pattern works. Target names and behavior are stabilizing. |
 | **Shell conventions** | Stable | `lib/log.sh`, `lib/platform.sh`, header format, and idempotency patterns are settled. |
 | **Conventional commits** | Stable | Types, scopes, and format are finalized. |
-| **Language standards** | Beta | Python, Bash, Terraform, Ansible tool selections are set. Configuration details may shift. |
+| **Language standards** | Beta | Python, Bash, Terraform, Ansible, Ruby tool selections are set. Configuration details may shift. |
 | **Coding practices** | Stable | General principles (DRY, KISS, testing, error handling) are finalized. |
 | **Git workflow** | Stable | Branch strategy, PR process, and merge policy are finalized. |
 | **Release & versioning** | Beta | Semver policy is defined. Automated release tooling is not yet implemented. |
