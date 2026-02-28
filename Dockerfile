@@ -29,6 +29,9 @@ RUN go install mvdan.cc/gofumpt@latest
 # Install govulncheck
 RUN go install golang.org/x/vuln/cmd/govulncheck@latest
 
+# === Node.js base: provides Node runtime for JS/TS tooling ===
+FROM node:22-bookworm-slim AS node-base
+
 # === Final stage ===
 FROM debian:bookworm-slim AS runtime
 
@@ -71,6 +74,12 @@ COPY lib/ /opt/devrail/lib/
 # Copy install scripts
 COPY scripts/ /opt/devrail/scripts/
 
+# Copy Node.js runtime from node-base (required for ESLint, Prettier, tsc, vitest)
+COPY --from=node-base /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-base /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
 # Set up environment
 ENV PATH="/opt/devrail/bin:/usr/local/go/bin:${PATH}"
 ENV DEVRAIL_LIB="/opt/devrail/lib"
@@ -95,6 +104,7 @@ RUN bash /opt/devrail/scripts/install-terraform.sh
 RUN bash /opt/devrail/scripts/install-ansible.sh
 RUN bash /opt/devrail/scripts/install-ruby.sh
 RUN bash /opt/devrail/scripts/install-go.sh
+RUN bash /opt/devrail/scripts/install-javascript.sh
 RUN bash /opt/devrail/scripts/install-universal.sh
 
 WORKDIR /workspace
