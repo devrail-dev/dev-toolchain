@@ -1,8 +1,8 @@
 # dev-toolchain
 
-> **Beta** -- DevRail is under active development. Standards, tooling, and container contents may change without notice. See [STABILITY.md](STABILITY.md) for details on what is ready and what is still in progress.
+> DevRail `v1` is stable. See [STABILITY.md](STABILITY.md) for component status.
 
-DevRail developer toolchain container image — a single Docker image containing all linters, formatters, security scanners, and test runners for Python, Bash, Terraform, and Ansible projects.
+DevRail developer toolchain container image — a single Docker image containing all linters, formatters, security scanners, and test runners for Python, Bash, Terraform, Ansible, Ruby, Go, and JavaScript/TypeScript projects.
 
 [![Build](https://github.com/devrail-dev/dev-toolchain/actions/workflows/build.yml/badge.svg)](https://github.com/devrail-dev/dev-toolchain/actions/workflows/build.yml)
 [![CI](https://github.com/devrail-dev/dev-toolchain/actions/workflows/ci.yml/badge.svg)](https://github.com/devrail-dev/dev-toolchain/actions/workflows/ci.yml)
@@ -31,23 +31,27 @@ Run `make help` to see all available targets:
 ```
 build                Build the container image locally
 check                Run all checks (lint, format, security, scan, test)
-format               Run formatters (shfmt on scripts)
+format               Run formatters for declared languages
 help                 Show this help
-lint                 Run linters (shellcheck on scripts)
-scan                 Run vulnerability scan (trivy)
-security             Run security checks (gitleaks)
-test                 Run validation tests
+init                 Scaffold config files for declared languages
+lint                 Run linters for declared languages
+scan                 Run universal scanning (trivy, gitleaks)
+security             Run language-specific security scanners
+test                 Run project test suite
 ```
 
 ## Included Tools
 
-| Category   | Tools                                         |
-|------------|-----------------------------------------------|
-| Python     | ruff, bandit, semgrep, pytest, mypy            |
-| Bash       | shellcheck, shfmt, bats                        |
-| Terraform  | tflint, tfsec, checkov, terraform-docs, terraform |
-| Ansible    | ansible-lint, molecule                         |
-| Security   | trivy, gitleaks                                |
+| Category       | Tools                                             |
+|----------------|---------------------------------------------------|
+| Python         | ruff, bandit, semgrep, pytest, mypy               |
+| Bash           | shellcheck, shfmt, bats                           |
+| Terraform      | tflint, tfsec, checkov, terraform-docs, terraform |
+| Ansible        | ansible-lint, molecule                            |
+| Ruby           | rubocop, reek, brakeman, bundler-audit, rspec, sorbet |
+| Go             | golangci-lint, gofumpt, govulncheck, go test      |
+| JavaScript/TS  | eslint, prettier, typescript, vitest, npm audit   |
+| Security       | trivy, gitleaks                                   |
 
 ## Configuration
 
@@ -58,6 +62,10 @@ languages:
   - python
   - bash
   - terraform
+  - ansible
+  - ruby
+  - go
+  - javascript
 ```
 
 ## Architecture
