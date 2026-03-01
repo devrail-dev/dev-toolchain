@@ -106,6 +106,9 @@ Scopes for this repository:
 | `bash` | Bash tool installation |
 | `terraform` | Terraform tool installation |
 | `ansible` | Ansible tool installation |
+| `ruby` | Ruby tool installation |
+| `go` | Go tool installation |
+| `javascript` | JavaScript/TypeScript tool installation |
 | `security` | Security tool installation (trivy, gitleaks) |
 | `ci` | CI/CD workflows |
 
