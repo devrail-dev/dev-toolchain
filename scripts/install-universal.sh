@@ -44,43 +44,21 @@ log_info "Starting universal security tools installation"
 
 TMPDIR_CLEANUP="$(mktemp -d)"
 
-# Install trivy (idempotent)
+# Install trivy via APT repository (idempotent)
 if command -v trivy &>/dev/null; then
   log_info "trivy is already installed, skipping"
 else
-  log_info "Installing trivy"
+  log_info "Installing trivy via APT repository"
   require_cmd "curl" "curl is required to install trivy"
 
-  ARCH="$(get_arch)"
-  OS="$(get_os)"
+  curl -fsSL https://get.trivy.dev/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+  echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://get.trivy.dev/deb generic main" \
+    > /etc/apt/sources.list.d/trivy.list
+  apt-get update -qq
+  apt-get install -y --no-install-recommends trivy
+  rm -rf /var/lib/apt/lists/*
 
-  # Map architecture names for trivy release artifacts
-  case "${ARCH}" in
-  amd64) TRIVY_ARCH="64bit" ;;
-  arm64) TRIVY_ARCH="ARM64" ;;
-  *) TRIVY_ARCH="${ARCH}" ;;
-  esac
-
-  case "${OS}" in
-  linux) TRIVY_OS="Linux" ;;
-  darwin) TRIVY_OS="macOS" ;;
-  *) TRIVY_OS="${OS}" ;;
-  esac
-
-  # Fetch latest trivy version from GitHub releases
-  TRIVY_VERSION=$(curl -fsSL https://api.github.com/repos/aquasecurity/trivy/releases/latest | jq -r '.tag_name' | sed 's/^v//')
-  if is_empty "${TRIVY_VERSION}"; then
-    log_warn "Could not determine latest trivy version, using fallback"
-    TRIVY_VERSION="0.58.0"
-  fi
-
-  log_info "Downloading trivy ${TRIVY_VERSION} for ${TRIVY_OS}/${TRIVY_ARCH}"
-  TRIVY_URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_OS}-${TRIVY_ARCH}.tar.gz"
-  curl -fsSL "${TRIVY_URL}" -o "${TMPDIR_CLEANUP}/trivy.tar.gz"
-  tar -xzf "${TMPDIR_CLEANUP}/trivy.tar.gz" -C "${TMPDIR_CLEANUP}"
-  install -m 0755 "${TMPDIR_CLEANUP}/trivy" /usr/local/bin/trivy
-
-  log_info "trivy ${TRIVY_VERSION} installed successfully"
+  log_info "trivy installed successfully"
 fi
 
 # Verify gitleaks is available (built in Go builder stage and copied)
