@@ -93,7 +93,7 @@ All scripts in this repo follow the DevRail shell script pattern:
 
 ## Adding a New Language
 
-See the [Contributing a Language Ecosystem](../standards/contributing-a-language.md) guide for the step-by-step process.
+See the [Contributing to DevRail](../standards/contributing.md) guide for the step-by-step process.
 
 ## Conventional Commits
 

@@ -46,8 +46,8 @@ HAS_JAVASCRIPT := $(filter javascript,$(LANGUAGES))
 # ---------------------------------------------------------------------------
 # .PHONY declarations
 # ---------------------------------------------------------------------------
-.PHONY: help build lint format test security scan docs check install-hooks
-.PHONY: _lint _format _test _security _scan _docs _check _check-config
+.PHONY: help build lint format test security scan docs check install-hooks init
+.PHONY: _lint _format _test _security _scan _docs _check _check-config _init
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
@@ -91,6 +91,9 @@ install-hooks: ## Install pre-commit hooks
 	@pre-commit install
 	@pre-commit install --hook-type commit-msg
 	@echo "Pre-commit hooks installed successfully. Hooks will run on every commit."
+
+init: ## Scaffold config files for declared languages
+	$(DOCKER_RUN) make _init
 
 lint: ## Run all linters
 	$(DOCKER_RUN) make _lint
@@ -660,6 +663,165 @@ _docs: _check-config
 		echo "{\"target\":\"docs\",\"status\":\"fail\",\"duration_ms\":$$duration,\"modules\":[$${modules%,}]}"; \
 	fi; \
 	exit $$overall_exit
+
+# --- _init: scaffold config files for declared languages ---
+_init: _check-config
+	@created=""; \
+	skipped=""; \
+	scaffold() { \
+	  _f="$$1"; shift; \
+	  if [ ! -f "$$_f" ]; then \
+	    printf '%s\n' "$$@" > "$$_f"; \
+	    created="$${created}\"$$_f\","; \
+	  else \
+	    skipped="$${skipped}\"$$_f\","; \
+	  fi; \
+	}; \
+	scaffold .editorconfig \
+	  'root = true' \
+	  '' \
+	  '[*]' \
+	  'charset = utf-8' \
+	  'end_of_line = lf' \
+	  'insert_final_newline = true' \
+	  'trim_trailing_whitespace = true' \
+	  'indent_style = space' \
+	  'indent_size = 2' \
+	  '' \
+	  '[Makefile]' \
+	  'indent_style = tab' \
+	  '' \
+	  '[*.py]' \
+	  'indent_size = 4' \
+	  '' \
+	  '[*.sh]' \
+	  'indent_size = 2'; \
+	if [ -n "$(HAS_PYTHON)" ]; then \
+	  scaffold ruff.toml \
+	    'line-length = 120' \
+	    'target-version = "py311"' \
+	    '' \
+	    '[lint]' \
+	    'select = ["E", "W", "F", "I", "UP", "B", "S", "C4", "SIM"]' \
+	    '' \
+	    '[format]' \
+	    'quote-style = "double"' \
+	    'indent-style = "space"'; \
+	fi; \
+	if [ -n "$(HAS_BASH)" ]; then \
+	  scaffold .shellcheckrc \
+	    'shell=bash' \
+	    'enable=all'; \
+	fi; \
+	if [ -n "$(HAS_TERRAFORM)" ]; then \
+	  scaffold .tflint.hcl \
+	    'config {' \
+	    '  call_module_type = "local"' \
+	    '}' \
+	    '' \
+	    'plugin "terraform" {' \
+	    '  enabled = true' \
+	    '  preset  = "recommended"' \
+	    '}'; \
+	fi; \
+	if [ -n "$(HAS_ANSIBLE)" ]; then \
+	  scaffold .ansible-lint \
+	    'profile: production' \
+	    '' \
+	    'exclude_paths:' \
+	    '  - .cache/' \
+	    '  - .github/' \
+	    '  - .gitlab/' \
+	    '' \
+	    'skip_list:' \
+	    '  - yaml[truthy]' \
+	    '' \
+	    'warn_list:' \
+	    '  - experimental'; \
+	fi; \
+	if [ -n "$(HAS_RUBY)" ]; then \
+	  scaffold .rubocop.yml \
+	    'AllCops:' \
+	    '  TargetRubyVersion: 3.1' \
+	    '  NewCops: enable' \
+	    '  Exclude:' \
+	    '    - "db/schema.rb"' \
+	    '    - "bin/**/*"' \
+	    '    - "vendor/**/*"' \
+	    '    - "node_modules/**/*"' \
+	    '' \
+	    'Style/Documentation:' \
+	    '  Enabled: false' \
+	    '' \
+	    'Metrics/BlockLength:' \
+	    '  Exclude:' \
+	    '    - "spec/**/*"' \
+	    '' \
+	    'Layout/LineLength:' \
+	    '  Max: 120'; \
+	  scaffold .reek.yml \
+	    'exclude_paths:' \
+	    '  - vendor' \
+	    '  - db/schema.rb' \
+	    '  - bin' \
+	    '' \
+	    'detectors:' \
+	    '  IrresponsibleModule:' \
+	    '    enabled: false'; \
+	  scaffold .rspec \
+	    '--require spec_helper' \
+	    '--format documentation' \
+	    '--color'; \
+	fi; \
+	if [ -n "$(HAS_GO)" ]; then \
+	  scaffold .golangci.yml \
+	    'version: "2"' \
+	    '' \
+	    'linters:' \
+	    '  enable:' \
+	    '    - errcheck' \
+	    '    - govet' \
+	    '    - staticcheck' \
+	    '    - gosec' \
+	    '    - ineffassign' \
+	    '    - unused' \
+	    '    - gocritic' \
+	    '    - gofumpt' \
+	    '    - misspell' \
+	    '    - revive' \
+	    '' \
+	    'issues:' \
+	    '  exclude-dirs:' \
+	    '    - vendor' \
+	    '    - node_modules'; \
+	fi; \
+	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
+	  scaffold eslint.config.js \
+	    'import eslint from "@eslint/js";' \
+	    'import tseslint from "typescript-eslint";' \
+	    '' \
+	    'export default tseslint.config(' \
+	    '  eslint.configs.recommended,' \
+	    '  tseslint.configs.recommended,' \
+	    '  {' \
+	    '    ignores: ["node_modules/", "dist/", "build/", "coverage/"],' \
+	    '  }' \
+	    ');'; \
+	  scaffold .prettierrc \
+	    '{' \
+	    '  "semi": true,' \
+	    '  "singleQuote": false,' \
+	    '  "trailingComma": "es5",' \
+	    '  "printWidth": 80,' \
+	    '  "tabWidth": 2' \
+	    '}'; \
+	  scaffold .prettierignore \
+	    'node_modules/' \
+	    'dist/' \
+	    'build/' \
+	    'coverage/'; \
+	fi; \
+	echo "{\"target\":\"init\",\"created\":[$${created%,}],\"skipped\":[$${skipped%,}]}"
 
 # --- _check: orchestrate all targets ---
 _check: _check-config
