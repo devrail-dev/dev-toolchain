@@ -52,7 +52,7 @@ Run `make help` to see all available targets:
 | `make test` | Run validation tests |
 | `make security` | Run security checks |
 | `make scan` | Run universal scanners (trivy, gitleaks) |
-| `make docs` | Generate documentation |
+| `make docs` | Generate documentation (terraform-docs, tool version report) |
 | `make check` | Run all of the above in sequence |
 | `make install-hooks` | Install pre-commit hooks |
 

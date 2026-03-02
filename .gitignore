@@ -29,3 +29,6 @@ tmp/
 # Build output
 dist/
 build/
+
+# DevRail generated output
+.devrail-output/
