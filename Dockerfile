@@ -68,11 +68,24 @@ RUN ARCH="$(dpkg --print-architecture)" && \
       -o /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
 
+# Install git-cliff for changelog generation from conventional commits
+ARG GIT_CLIFF_VERSION=2.12.0
+RUN ARCH="$(uname -m)" && \
+    curl -fsSL "https://github.com/orhun/git-cliff/releases/download/v${GIT_CLIFF_VERSION}/git-cliff-${GIT_CLIFF_VERSION}-${ARCH}-unknown-linux-gnu.tar.gz" \
+      -o /tmp/git-cliff.tar.gz && \
+    tar xzf /tmp/git-cliff.tar.gz -C /tmp && \
+    mv /tmp/git-cliff-${GIT_CLIFF_VERSION}/git-cliff /usr/local/bin/git-cliff && \
+    chmod +x /usr/local/bin/git-cliff && \
+    rm -rf /tmp/git-cliff*
+
 # Copy shared libraries
 COPY lib/ /opt/devrail/lib/
 
 # Copy install scripts
 COPY scripts/ /opt/devrail/scripts/
+
+# Copy default configuration files
+COPY config/ /opt/devrail/config/
 
 # Copy Node.js runtime from node-base (required for ESLint, Prettier, tsc, vitest)
 COPY --from=node-base /usr/local/bin/node /usr/local/bin/node
@@ -106,5 +119,8 @@ RUN bash /opt/devrail/scripts/install-ruby.sh
 RUN bash /opt/devrail/scripts/install-go.sh
 RUN bash /opt/devrail/scripts/install-javascript.sh
 RUN bash /opt/devrail/scripts/install-universal.sh
+
+# Allow git operations on mounted workspaces with different ownership
+RUN git config --global --add safe.directory '*'
 
 WORKDIR /workspace

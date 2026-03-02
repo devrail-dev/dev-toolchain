@@ -46,8 +46,8 @@ HAS_JAVASCRIPT := $(filter javascript,$(LANGUAGES))
 # ---------------------------------------------------------------------------
 # .PHONY declarations
 # ---------------------------------------------------------------------------
-.PHONY: help build lint format test security scan docs check install-hooks init
-.PHONY: _lint _format _test _security _scan _docs _check _check-config _init
+.PHONY: help build lint format test security scan docs changelog check install-hooks init
+.PHONY: _lint _format _test _security _scan _docs _changelog _check _check-config _init
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
@@ -61,6 +61,9 @@ help: ## Show this help
 
 build: ## Build the container image locally
 	docker build -t $(DEVRAIL_IMAGE):$(DEVRAIL_TAG) .
+
+changelog: ## Generate CHANGELOG.md from conventional commits
+	$(DOCKER_RUN) make _changelog
 
 check: ## Run all checks (lint, format, test, security, scan, docs)
 	$(DOCKER_RUN) make _check
@@ -709,6 +712,7 @@ _docs: _check-config
 		fi; \
 		_tv trivy "trivy --version"; \
 		_tv gitleaks "gitleaks version"; \
+		_tv git-cliff "git-cliff --version"; \
 		printf '}}\n'; \
 	} > .devrail-output/tool-versions.json; \
 	generators="$${generators}\"tool-versions\","; \
@@ -720,6 +724,34 @@ _docs: _check-config
 		echo "{\"target\":\"docs\",\"status\":\"fail\",\"duration_ms\":$$duration,\"generators\":[$${generators%,}],\"modules\":[$${modules%,}]}"; \
 	fi; \
 	exit $$overall_exit
+
+# --- _changelog: generate CHANGELOG.md from conventional commits ---
+_changelog: _check-config
+	@start_time=$$(date +%s%3N); \
+	config=""; \
+	if [ -f "cliff.toml" ]; then \
+		config="cliff.toml"; \
+	elif [ -f "/opt/devrail/config/cliff.toml" ]; then \
+		config="/opt/devrail/config/cliff.toml"; \
+	fi; \
+	if [ -z "$$config" ]; then \
+		echo '{"target":"changelog","status":"error","error":"no cliff.toml found","exit_code":2}'; \
+		exit 2; \
+	fi; \
+	if ! git rev-parse --git-dir >/dev/null 2>&1; then \
+		echo '{"target":"changelog","status":"error","error":"not a git repository","exit_code":2}'; \
+		exit 2; \
+	fi; \
+	git-cliff --config "$$config" --output CHANGELOG.md; \
+	cl_exit=$$?; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ $$cl_exit -eq 0 ]; then \
+		echo "{\"target\":\"changelog\",\"status\":\"pass\",\"duration_ms\":$$duration,\"config\":\"$$config\",\"output\":\"CHANGELOG.md\"}"; \
+	else \
+		echo "{\"target\":\"changelog\",\"status\":\"fail\",\"duration_ms\":$$duration,\"config\":\"$$config\",\"exit_code\":$$cl_exit}"; \
+		exit $$cl_exit; \
+	fi
 
 # --- _init: scaffold config files for declared languages ---
 _init: _check-config
@@ -753,6 +785,12 @@ _init: _check-config
 	  '' \
 	  '[*.sh]' \
 	  'indent_size = 2'; \
+	if [ -f "/opt/devrail/config/cliff.toml" ] && [ ! -f "cliff.toml" ]; then \
+	  cp /opt/devrail/config/cliff.toml cliff.toml; \
+	  created="$${created}\"cliff.toml\","; \
+	elif [ -f "cliff.toml" ]; then \
+	  skipped="$${skipped}\"cliff.toml\","; \
+	fi; \
 	if [ -n "$(HAS_PYTHON)" ]; then \
 	  scaffold ruff.toml \
 	    'line-length = 120' \

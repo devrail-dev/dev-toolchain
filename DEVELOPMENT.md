@@ -53,7 +53,9 @@ Run `make help` to see all available targets:
 | `make security` | Run security checks |
 | `make scan` | Run universal scanners (trivy, gitleaks) |
 | `make docs` | Generate documentation (terraform-docs, tool version report) |
+| `make changelog` | Generate CHANGELOG.md from conventional commits (git-cliff) |
 | `make check` | Run all of the above in sequence |
+| `make init` | Scaffold config files for declared languages |
 | `make install-hooks` | Install pre-commit hooks |
 
 ## Repository Structure
@@ -63,11 +65,16 @@ dev-toolchain/
 ├── Dockerfile              # Multi-stage container build
 ├── Makefile                # Two-layer delegation Makefile
 ├── .devrail.yml            # DevRail project configuration
+├── config/                 # Default configuration files
+│   └── cliff.toml          # Default git-cliff changelog config
 ├── scripts/                # Per-language install scripts
 │   ├── install-python.sh
 │   ├── install-bash.sh
 │   ├── install-terraform.sh
 │   ├── install-ansible.sh
+│   ├── install-ruby.sh
+│   ├── install-go.sh
+│   ├── install-javascript.sh
 │   └── install-universal.sh
 ├── lib/                    # Shared bash libraries
 │   ├── log.sh
@@ -77,6 +84,9 @@ dev-toolchain/
     ├── test-bash.sh
     ├── test-terraform.sh
     ├── test-ansible.sh
+    ├── test-ruby.sh
+    ├── test-go.sh
+    ├── test-javascript.sh
     └── test-universal.sh
 ```
 
@@ -110,6 +120,7 @@ Scopes for this repository:
 | `go` | Go tool installation |
 | `javascript` | JavaScript/TypeScript tool installation |
 | `security` | Security tool installation (trivy, gitleaks) |
+| `changelog` | Changelog generation tooling (git-cliff) |
 | `ci` | CI/CD workflows |
 
 Examples:

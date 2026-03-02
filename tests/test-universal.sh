@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tests/test-universal.sh — Validate universal security tools installation
+# tests/test-universal.sh — Validate universal tools installation
 #
-# Purpose: Verifies that all universal security tools are installed and executable.
+# Purpose: Verifies that all universal tools are installed and executable.
 # Usage:   bash tests/test-universal.sh [--help]
 # Dependencies: lib/log.sh
 
@@ -16,15 +16,15 @@ source "${DEVRAIL_LIB}/log.sh"
 
 # --- Help ---
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  log_info "test-universal.sh — Validate universal security tools installation"
+  log_info "test-universal.sh — Validate universal tools installation"
   log_info "Usage: bash tests/test-universal.sh [--help]"
-  log_info "Checks: trivy, gitleaks"
+  log_info "Checks: trivy, gitleaks, git-cliff"
   exit 0
 fi
 
 # --- Main ---
 
-log_info "Validating universal security tools installation"
+log_info "Validating universal tools installation"
 
 FAILURES=0
 
@@ -50,10 +50,11 @@ check_tool() {
 check_tool "trivy" "--version"
 # gitleaks uses "gitleaks version" without -- prefix
 check_tool "gitleaks" "version"
+check_tool "git-cliff" "--version"
 
 if [[ "${FAILURES}" -gt 0 ]]; then
-  log_error "Universal security tools validation failed: ${FAILURES} tool(s) missing or broken"
+  log_error "Universal tools validation failed: ${FAILURES} tool(s) missing or broken"
   exit 1
 fi
 
-log_info "All universal security tools validated successfully"
+log_info "All universal tools validated successfully"

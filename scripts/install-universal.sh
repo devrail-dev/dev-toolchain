@@ -7,8 +7,9 @@
 # Dependencies: curl, lib/log.sh, lib/platform.sh
 #
 # Tools installed:
-#   - trivy     (Vulnerability and misconfiguration scanner)
-#   - gitleaks  (Secret detection in git repos — built in Go builder stage)
+#   - trivy      (Vulnerability and misconfiguration scanner)
+#   - gitleaks   (Secret detection in git repos — built in Go builder stage)
+#   - git-cliff  (Changelog generator from conventional commits — binary in Dockerfile)
 
 set -euo pipefail
 
@@ -23,9 +24,9 @@ source "${DEVRAIL_LIB}/platform.sh"
 
 # --- Help ---
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  log_info "install-universal.sh — Install universal security tools for DevRail"
+  log_info "install-universal.sh — Install universal tools for DevRail"
   log_info "Usage: bash scripts/install-universal.sh [--help]"
-  log_info "Tools: trivy, gitleaks"
+  log_info "Tools: trivy, gitleaks, git-cliff"
   exit 0
 fi
 
@@ -40,7 +41,7 @@ trap cleanup EXIT
 
 # --- Main ---
 
-log_info "Starting universal security tools installation"
+log_info "Starting universal tools installation"
 
 TMPDIR_CLEANUP="$(mktemp -d)"
 
@@ -68,4 +69,11 @@ else
   log_warn "gitleaks not found — expected to be copied from Go builder stage"
 fi
 
-log_info "Universal security tools installation complete"
+# Verify git-cliff is available (binary downloaded in Dockerfile)
+if command -v git-cliff &>/dev/null; then
+  log_info "git-cliff is already installed"
+else
+  log_warn "git-cliff not found — expected to be downloaded in Dockerfile"
+fi
+
+log_info "Universal tools installation complete"
