@@ -46,8 +46,8 @@ HAS_JAVASCRIPT := $(filter javascript,$(LANGUAGES))
 # ---------------------------------------------------------------------------
 # .PHONY declarations
 # ---------------------------------------------------------------------------
-.PHONY: help build lint format test security scan docs changelog check install-hooks init
-.PHONY: _lint _format _test _security _scan _docs _changelog _check _check-config _init
+.PHONY: help build lint format fix test security scan docs changelog check install-hooks init
+.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
@@ -70,6 +70,9 @@ check: ## Run all checks (lint, format, test, security, scan, docs)
 
 docs: ## Generate documentation
 	$(DOCKER_RUN) make _docs
+
+fix: ## Auto-fix formatting issues in-place
+	$(DOCKER_RUN) make _fix
 
 format: ## Run all formatters
 	$(DOCKER_RUN) make _format
@@ -362,6 +365,105 @@ _format: _check-config
 		echo "{\"target\":\"format\",\"status\":\"pass\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}]}"; \
 	else \
 		echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+	fi; \
+	exit $$overall_exit
+
+# --- _fix: language-specific format fixing (in-place) ---
+_fix: _check-config
+	@start_time=$$(date +%s%3N); \
+	overall_exit=0; \
+	ran_languages=""; \
+	failed_languages=""; \
+	if [ -n "$(HAS_PYTHON)" ]; then \
+		ran_languages="$${ran_languages}\"python\","; \
+		ruff format . || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_BASH)" ]; then \
+		ran_languages="$${ran_languages}\"bash\","; \
+		sh_files=$$(find . -name '*.sh' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$sh_files" ]; then \
+			echo "$$sh_files" | xargs shfmt -w || { overall_exit=1; failed_languages="$${failed_languages}\"bash\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping bash fix: no .sh files found","language":"bash"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_TERRAFORM)" ]; then \
+		ran_languages="$${ran_languages}\"terraform\","; \
+		terraform fmt -recursive || { overall_exit=1; failed_languages="$${failed_languages}\"terraform\","; }; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_ANSIBLE)" ]; then \
+		ran_languages="$${ran_languages}\"ansible\","; \
+		echo '{"target":"fix","language":"ansible","status":"skip","reason":"no formatter configured"}' >&2; \
+	fi; \
+	if [ -n "$(HAS_RUBY)" ]; then \
+		ran_languages="$${ran_languages}\"ruby\","; \
+		rb_files=$$(find . -name '*.rb' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$rb_files" ]; then \
+			rubocop -a . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping ruby fix: no .rb files found","language":"ruby"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_GO)" ]; then \
+		ran_languages="$${ran_languages}\"go\","; \
+		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
+		if [ -n "$$go_files" ]; then \
+			gofumpt -w . || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping go fix: no .go files found","language":"go"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
+		ran_languages="$${ran_languages}\"javascript\","; \
+		js_files=$$(find . \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.mjs' -o -name '*.cjs' \) -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' 2>/dev/null); \
+		if [ -n "$$js_files" ]; then \
+			prettier --write . || { overall_exit=1; failed_languages="$${failed_languages}\"javascript\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping javascript fix: no JS/TS files found","language":"javascript"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	end_time=$$(date +%s%3N); \
+	duration=$$((end_time - start_time)); \
+	if [ $$overall_exit -eq 0 ]; then \
+		echo "{\"target\":\"fix\",\"status\":\"pass\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}]}"; \
+	else \
+		echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
 	fi; \
 	exit $$overall_exit
 
