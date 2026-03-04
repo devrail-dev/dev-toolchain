@@ -2,7 +2,7 @@
 
 > DevRail `v1` is stable. See [STABILITY.md](STABILITY.md) for component status.
 
-DevRail developer toolchain container image — a single Docker image containing all linters, formatters, security scanners, and test runners for Python, Bash, Terraform, Ansible, Ruby, Go, and JavaScript/TypeScript projects.
+DevRail developer toolchain container image — a single Docker image containing all linters, formatters, security scanners, and test runners for Python, Bash, Terraform, Ansible, Ruby, Go, JavaScript/TypeScript, and Rust projects.
 
 [![Build](https://github.com/devrail-dev/dev-toolchain/actions/workflows/build.yml/badge.svg)](https://github.com/devrail-dev/dev-toolchain/actions/workflows/build.yml)
 [![CI](https://github.com/devrail-dev/dev-toolchain/actions/workflows/ci.yml/badge.svg)](https://github.com/devrail-dev/dev-toolchain/actions/workflows/ci.yml)
@@ -30,14 +30,18 @@ Run `make help` to see all available targets:
 
 ```
 build                Build the container image locally
-check                Run all checks (lint, format, security, scan, test)
-format               Run formatters for declared languages
+changelog            Generate CHANGELOG.md from conventional commits
+check                Run all checks (lint, format, test, security, scan, docs)
+docs                 Generate documentation
+fix                  Auto-fix formatting issues in-place
+format               Run all formatters
 help                 Show this help
 init                 Scaffold config files for declared languages
-lint                 Run linters for declared languages
-scan                 Run universal scanning (trivy, gitleaks)
+install-hooks        Install pre-commit hooks
+lint                 Run all linters
+scan                 Run universal scanners (trivy, gitleaks)
 security             Run language-specific security scanners
-test                 Run project test suite
+test                 Run validation tests
 ```
 
 ## Included Tools
@@ -51,6 +55,7 @@ test                 Run project test suite
 | Ruby           | rubocop, reek, brakeman, bundler-audit, rspec, sorbet |
 | Go             | golangci-lint, gofumpt, govulncheck, go test      |
 | JavaScript/TS  | eslint, prettier, typescript, vitest, npm audit   |
+| Rust           | clippy, rustfmt, cargo-audit, cargo-deny, cargo test |
 | Security       | trivy, gitleaks                                   |
 
 ## Configuration
@@ -66,12 +71,14 @@ languages:
   - ruby
   - go
   - javascript
+  - rust
 ```
 
 ## Architecture
 
 - **Base image:** Debian bookworm-slim (multi-arch: amd64 + arm64)
 - **Go builder stage:** Compiles Go-based tools (tflint, terraform-docs, etc.)
+- **Rust builder stage:** Provides Rust toolchain and cargo-audit/cargo-deny via cargo-binstall
 - **Modular install scripts:** One script per language ecosystem
 - **Shared libraries:** `lib/log.sh` (logging) and `lib/platform.sh` (platform detection)
 
