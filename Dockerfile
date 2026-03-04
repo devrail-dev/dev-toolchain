@@ -33,6 +33,8 @@ RUN go install golang.org/x/vuln/cmd/govulncheck@latest
 # Provides Rust toolchain (rustup + cargo + rustc + clippy + rustfmt) and
 # installs cargo-audit and cargo-deny via cargo-binstall.
 FROM rust:1-slim-bookworm AS rust-builder
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN curl -L --proto '=https' --tlsv1.2 -sSf \
       https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
     | bash
