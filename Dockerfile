@@ -29,6 +29,15 @@ RUN go install mvdan.cc/gofumpt@latest
 # Install govulncheck
 RUN go install golang.org/x/vuln/cmd/govulncheck@latest
 
+# === Rust builder stage ===
+# Provides Rust toolchain (rustup + cargo + rustc + clippy + rustfmt) and
+# installs cargo-audit and cargo-deny via cargo-binstall.
+FROM rust:1-slim-bookworm AS rust-builder
+RUN curl -L --proto '=https' --tlsv1.2 -sSf \
+      https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+    | bash
+RUN cargo binstall --no-confirm cargo-audit cargo-deny
+
 # === Node.js base: provides Node runtime for JS/TS tooling ===
 FROM node:22-bookworm-slim AS node-base
 
@@ -93,8 +102,14 @@ COPY --from=node-base /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
+# Copy Rust toolchain from rust-builder (rustup + cargo + rustc + clippy + rustfmt + cargo-audit + cargo-deny)
+COPY --from=rust-builder /usr/local/rustup /usr/local/rustup
+COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV CARGO_HOME=/usr/local/cargo
+
 # Set up environment
-ENV PATH="/opt/devrail/bin:/usr/local/go/bin:${PATH}"
+ENV PATH="/opt/devrail/bin:/usr/local/cargo/bin:/usr/local/go/bin:${PATH}"
 ENV DEVRAIL_LIB="/opt/devrail/lib"
 
 # Copy Go SDK from builder (required at runtime by golangci-lint, govulncheck)
@@ -118,6 +133,7 @@ RUN bash /opt/devrail/scripts/install-ansible.sh
 RUN bash /opt/devrail/scripts/install-ruby.sh
 RUN bash /opt/devrail/scripts/install-go.sh
 RUN bash /opt/devrail/scripts/install-javascript.sh
+RUN bash /opt/devrail/scripts/install-rust.sh
 RUN bash /opt/devrail/scripts/install-universal.sh
 
 # Allow git operations on mounted workspaces with different ownership

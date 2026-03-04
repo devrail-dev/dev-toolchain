@@ -42,6 +42,7 @@ HAS_ANSIBLE    := $(filter ansible,$(LANGUAGES))
 HAS_RUBY       := $(filter ruby,$(LANGUAGES))
 HAS_GO         := $(filter go,$(LANGUAGES))
 HAS_JAVASCRIPT := $(filter javascript,$(LANGUAGES))
+HAS_RUST       := $(filter rust,$(LANGUAGES))
 
 # ---------------------------------------------------------------------------
 # .PHONY declarations
@@ -260,6 +261,21 @@ _lint: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_RUST)" ]; then \
+		ran_languages="$${ran_languages}\"rust\","; \
+		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
+		if [ -n "$$rs_files" ]; then \
+			cargo clippy --all-targets --all-features -- -D warnings || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping rust lint: no .rs files found","language":"rust"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -359,6 +375,21 @@ _format: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_RUST)" ]; then \
+		ran_languages="$${ran_languages}\"rust\","; \
+		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
+		if [ -n "$$rs_files" ]; then \
+			cargo fmt --all -- --check || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping rust format: no .rs files found","language":"rust"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -450,6 +481,21 @@ _fix: _check-config
 			prettier --write . || { overall_exit=1; failed_languages="$${failed_languages}\"javascript\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping javascript fix: no JS/TS files found","language":"javascript"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_RUST)" ]; then \
+		ran_languages="$${ran_languages}\"rust\","; \
+		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
+		if [ -n "$$rs_files" ]; then \
+			cargo fmt --all || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping rust fix: no .rs files found","language":"rust"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -579,6 +625,22 @@ _test: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_RUST)" ]; then \
+		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
+		if [ -n "$$rs_files" ] && [ -f "Cargo.toml" ]; then \
+			ran_languages="$${ran_languages}\"rust\","; \
+			cargo test --all-targets || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"rust\","; \
+			echo '{"level":"info","msg":"skipping rust tests: no .rs files or Cargo.toml found","language":"rust"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ -z "$${ran_languages}" ] && [ -n "$${skipped_languages}" ]; then \
@@ -686,6 +748,32 @@ _security: _check-config
 		else \
 			skipped_languages="$${skipped_languages}\"javascript\","; \
 			echo '{"level":"info","msg":"skipping npm audit: no package-lock.json found","language":"javascript"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_RUST)" ]; then \
+		if [ -f "Cargo.lock" ]; then \
+			ran_languages="$${ran_languages}\"rust\","; \
+			cargo audit || { overall_exit=1; failed_languages="$${failed_languages}\"rust:cargo-audit\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"rust:cargo-audit\","; \
+			echo '{"level":"info","msg":"skipping cargo audit: no Cargo.lock found","language":"rust"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+		if [ -f "deny.toml" ]; then \
+			cargo deny check || { overall_exit=1; failed_languages="$${failed_languages}\"rust:cargo-deny\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping cargo deny: no deny.toml found","language":"rust"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -812,6 +900,14 @@ _docs: _check-config
 			_tv prettier "prettier --version"; \
 			_tv tsc "tsc --version"; \
 			_tv vitest "vitest --version"; \
+		fi; \
+		if [ -n "$(HAS_RUST)" ]; then \
+			_tv rustc "rustc --version"; \
+			_tv cargo "cargo --version"; \
+			_tv clippy "cargo clippy --version"; \
+			_tv rustfmt "rustfmt --version"; \
+			_tv cargo-audit "cargo audit --version"; \
+			_tv cargo-deny "cargo deny --version"; \
 		fi; \
 		_tv trivy "trivy --version"; \
 		_tv gitleaks "gitleaks version"; \
@@ -1018,6 +1114,45 @@ _init: _check-config
 	    'dist/' \
 	    'build/' \
 	    'coverage/'; \
+	fi; \
+	if [ -n "$(HAS_RUST)" ]; then \
+	  scaffold clippy.toml \
+	    '# clippy.toml -- DevRail Rust clippy configuration' \
+	    '# See: https://doc.rust-lang.org/clippy/lint_configuration.html' \
+	    'too-many-arguments-threshold = 7'; \
+	  scaffold rustfmt.toml \
+	    '# rustfmt.toml -- DevRail Rust formatter configuration' \
+	    'edition = "2021"' \
+	    'max_width = 100' \
+	    'use_field_init_shorthand = true' \
+	    'use_try_shorthand = true'; \
+	  scaffold deny.toml \
+	    '# deny.toml -- DevRail cargo-deny configuration' \
+	    '# See: https://embarkstudios.github.io/cargo-deny/' \
+	    '' \
+	    '[advisories]' \
+	    'vulnerability = "deny"' \
+	    'unmaintained = "warn"' \
+	    'yanked = "warn"' \
+	    '' \
+	    '[licenses]' \
+	    'unlicensed = "deny"' \
+	    'allow = [' \
+	    '  "MIT",' \
+	    '  "Apache-2.0",' \
+	    '  "BSD-2-Clause",' \
+	    '  "BSD-3-Clause",' \
+	    '  "ISC",' \
+	    '  "Unicode-3.0",' \
+	    '  "Unicode-DFS-2016",' \
+	    ']' \
+	    '' \
+	    '[bans]' \
+	    'multiple-versions = "warn"' \
+	    '' \
+	    '[sources]' \
+	    'unknown-registry = "deny"' \
+	    'unknown-git = "warn"'; \
 	fi; \
 	echo "{\"target\":\"init\",\"created\":[$${created%,}],\"skipped\":[$${skipped%,}]}"
 
