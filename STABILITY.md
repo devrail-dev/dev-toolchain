@@ -17,7 +17,7 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | **Makefile contract** | Stable | Two-layer delegation pattern, JSON summary output, `init` scaffolding. |
 | **Shell conventions** | Stable | `lib/log.sh`, `lib/platform.sh`, header format, and idempotency patterns are settled. |
 | **Conventional commits** | Stable | Types, scopes, and format are finalized. Pre-commit hook published. |
-| **Language standards** | Stable | Python, Bash, Terraform, Ansible, Ruby, Go, JavaScript/TypeScript — all 7 ecosystems shipped. |
+| **Language standards** | Stable | Python, Bash, Terraform, Ansible, Ruby, Go, JavaScript/TypeScript, Rust — all 8 ecosystems shipped. |
 | **Coding practices** | Stable | General principles (DRY, KISS, testing, error handling) are finalized. |
 | **Git workflow** | Stable | Branch strategy, PR process, and merge policy are finalized. |
 | **Release & versioning** | Stable | Semver policy is defined and in use across all repos. |
