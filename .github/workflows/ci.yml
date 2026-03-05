@@ -34,6 +34,14 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
             make _check
 
+      # Phase 2b: Validate tool version manifest
+      - name: Validate tool version manifest
+        run: |
+          docker run --rm \
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            bash /opt/devrail/scripts/report-tool-versions.sh \
+            | jq .
+
       # Phase 3: Security scans
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.
