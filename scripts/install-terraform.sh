@@ -12,6 +12,7 @@
 #   - checkov         (IaC security scanner — installed via pip)
 #   - terraform-docs  (Terraform documentation gen — built in Go builder stage)
 #   - terraform       (Terraform CLI — downloaded from HashiCorp)
+#   - terragrunt      (Terraform wrapper for DRY configs — downloaded from GitHub)
 #
 # Notes:
 #   - terratest is a Go module dependency, not a standalone binary.
@@ -32,7 +33,7 @@ source "${DEVRAIL_LIB}/platform.sh"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   log_info "install-terraform.sh — Install Terraform tooling for DevRail"
   log_info "Usage: bash scripts/install-terraform.sh [--help]"
-  log_info "Tools: tflint, tfsec, checkov, terraform-docs, terraform"
+  log_info "Tools: tflint, tfsec, checkov, terraform-docs, terraform, terragrunt"
   log_info "Note: terratest is a Go module dependency — not installed as a binary"
   exit 0
 fi
@@ -109,6 +110,31 @@ else
   install -m 0755 "${TMPDIR_CLEANUP}/terraform" /usr/local/bin/terraform
 
   log_info "terraform ${TERRAFORM_VERSION} installed successfully"
+fi
+
+# Install terragrunt (idempotent)
+if command -v terragrunt &>/dev/null; then
+  log_info "terragrunt is already installed, skipping"
+else
+  log_info "Installing terragrunt"
+  require_cmd "curl" "curl is required to download terragrunt"
+
+  ARCH="$(get_arch)"
+  OS="$(get_os)"
+
+  # Fetch the latest terragrunt version from GitHub API
+  TERRAGRUNT_VERSION=$(curl -s https://api.github.com/repos/gruntwork-io/terragrunt/releases/latest | jq -r '.tag_name' | sed 's/^v//')
+  if is_empty "${TERRAGRUNT_VERSION}"; then
+    log_warn "Could not determine latest terragrunt version, using fallback"
+    TERRAGRUNT_VERSION="0.99.4"
+  fi
+
+  log_info "Downloading terragrunt ${TERRAGRUNT_VERSION} for ${OS}/${ARCH}"
+  TERRAGRUNT_URL="https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_${OS}_${ARCH}"
+  curl -fsSL "${TERRAGRUNT_URL}" -o "${TMPDIR_CLEANUP}/terragrunt"
+  install -m 0755 "${TMPDIR_CLEANUP}/terragrunt" /usr/local/bin/terragrunt
+
+  log_info "terragrunt ${TERRAGRUNT_VERSION} installed successfully"
 fi
 
 # Note about terratest

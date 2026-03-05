@@ -319,6 +319,10 @@ _format: _check-config
 	if [ -n "$(HAS_TERRAFORM)" ]; then \
 		ran_languages="$${ran_languages}\"terraform\","; \
 		terraform fmt -check -recursive || { overall_exit=1; failed_languages="$${failed_languages}\"terraform\","; }; \
+		tg_files=$$(find . -name 'terragrunt.hcl' -not -path './.git/*' -not -path './.terraform/*' 2>/dev/null); \
+		if [ -n "$$tg_files" ]; then \
+			terragrunt hclfmt --terragrunt-check || { overall_exit=1; failed_languages="$${failed_languages}\"terraform:terragrunt\","; }; \
+		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
 			duration=$$((end_time - start_time)); \
@@ -433,6 +437,10 @@ _fix: _check-config
 	if [ -n "$(HAS_TERRAFORM)" ]; then \
 		ran_languages="$${ran_languages}\"terraform\","; \
 		terraform fmt -recursive || { overall_exit=1; failed_languages="$${failed_languages}\"terraform\","; }; \
+		tg_files=$$(find . -name 'terragrunt.hcl' -not -path './.git/*' -not -path './.terraform/*' 2>/dev/null); \
+		if [ -n "$$tg_files" ]; then \
+			terragrunt hclfmt || { overall_exit=1; failed_languages="$${failed_languages}\"terraform:terragrunt\","; }; \
+		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
 			duration=$$((end_time - start_time)); \
@@ -874,6 +882,7 @@ _docs: _check-config
 			_tv tfsec "tfsec --version"; \
 			_tv checkov "checkov --version"; \
 			_tv terraform-docs "terraform-docs --version"; \
+			_tv terragrunt "terragrunt --version"; \
 		fi; \
 		if [ -n "$(HAS_ANSIBLE)" ]; then \
 			_tv ansible-lint "ansible-lint --version"; \
