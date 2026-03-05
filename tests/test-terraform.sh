@@ -18,7 +18,7 @@ source "${DEVRAIL_LIB}/log.sh"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   log_info "test-terraform.sh — Validate Terraform tooling installation"
   log_info "Usage: bash tests/test-terraform.sh [--help]"
-  log_info "Checks: tflint, tfsec, checkov, terraform-docs, terraform"
+  log_info "Checks: tflint, tfsec, checkov, terraform-docs, terraform, terragrunt"
   exit 0
 fi
 
@@ -52,6 +52,7 @@ check_tool "tfsec" "--version"
 check_tool "checkov" "--version"
 check_tool "terraform-docs" "--version"
 check_tool "terraform" "version"
+check_tool "terragrunt" "--version"
 
 # terratest is a Go module, not a binary — log a note
 log_info "terratest is a Go module dependency — no binary to validate"
