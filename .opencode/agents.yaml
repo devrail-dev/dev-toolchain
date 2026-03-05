@@ -28,6 +28,11 @@ agents:
          check fails, fix the underlying issue. Never comment out code, add
          suppression annotations, disable rules, or mark CI jobs as
          allowed-to-fail to bypass a failing check.
+      8. Update documentation when changing behavior. When a change affects
+         public interfaces, configuration, CLI usage, or setup steps, update
+         the relevant documentation (README, DEVELOPMENT.md, inline docs) in
+         the same commit or PR. Do not leave documentation out of sync with
+         code.
 
       Quick Reference:
 
