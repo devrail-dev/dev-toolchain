@@ -123,14 +123,59 @@ Scopes for this repository:
 | `ruby` | Ruby tool installation |
 | `go` | Go tool installation |
 | `javascript` | JavaScript/TypeScript tool installation |
+| `rust` | Rust tool installation |
 | `security` | Security tool installation (trivy, gitleaks) |
 | `changelog` | Changelog generation tooling (git-cliff) |
 | `ci` | CI/CD workflows |
+| `release` | Release process and tooling |
 
 Examples:
 - `feat(python): add ruff linter to install script`
 - `fix(container): resolve arm64 build failure`
 - `chore(ci): update build workflow to use latest actions`
+- `chore(release): prepare v1.6.0`
+
+## Releasing
+
+The dev-toolchain container is released via semver-tagged Docker images published to GHCR.
+
+### When to Cut a Release
+
+| Change Type | Version Bump | Example |
+|---|---|---|
+| New language ecosystem | Minor (x.Y.0) | Adding Java support → v1.7.0 |
+| New tool or significant feature | Minor (x.Y.0) | Adding a new Makefile target |
+| Bug fix or config correction | Patch (x.y.Z) | Fixing a broken install script |
+| Breaking change | Major (X.0.0) | Removing a language or changing Makefile contract |
+| Routine weekly rebuild | Patch (auto) | Handled automatically by scheduled CI |
+
+Weekly cron builds (Monday 6AM UTC) automatically bump the patch version and publish. Manual releases are only needed for feature or breaking changes that warrant a specific version number.
+
+### How to Release
+
+1. Ensure all changes are merged to `main` and `make check` passes.
+2. Run:
+   ```bash
+   make release VERSION=1.6.0
+   ```
+3. The script will:
+   - Validate preconditions (on main, clean state, tag doesn't exist)
+   - Update CHANGELOG.md (move [Unreleased] entries under the new version)
+   - Commit with `chore(release): prepare v1.6.0`
+   - Create annotated tag `v1.6.0`
+   - Prompt for confirmation before pushing
+
+### What Happens After Push
+
+Once the tag is pushed to origin, GitHub Actions handles everything:
+
+1. **build.yml** -- Builds multi-arch container image (amd64 + arm64) and publishes to GHCR
+2. **release.yml** -- Creates a GitHub Release with auto-generated release notes and updates the `v1` floating tag
+3. **build.yml (version-manifest)** -- Generates `tool-versions.json` from the published container and attaches it to the release
+
+### Routine Rebuilds
+
+Weekly Monday builds require no manual action. The `auto-version` job in `build.yml` finds the latest tag, bumps the patch version, and triggers the full build+release pipeline. This keeps tool versions current without manual intervention.
 
 <!-- devrail:coding-practices -->
 

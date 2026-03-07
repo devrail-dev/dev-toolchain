@@ -47,7 +47,7 @@ HAS_RUST       := $(filter rust,$(LANGUAGES))
 # ---------------------------------------------------------------------------
 # .PHONY declarations
 # ---------------------------------------------------------------------------
-.PHONY: help build lint format fix test security scan docs changelog check install-hooks init
+.PHONY: help build lint format fix test security scan docs changelog check install-hooks init release
 .PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init
 
 # ===========================================================================
@@ -105,6 +105,13 @@ init: ## Scaffold config files for declared languages
 
 lint: ## Run all linters
 	$(DOCKER_RUN) make _lint
+
+release: ## Cut a versioned release (usage: make release VERSION=1.6.0)
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION is required. Usage: make release VERSION=1.6.0"; \
+		exit 2; \
+	fi
+	@bash scripts/release.sh $(VERSION)
 
 scan: ## Run universal scanners (trivy, gitleaks)
 	$(DOCKER_RUN) make _scan
