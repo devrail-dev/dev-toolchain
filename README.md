@@ -39,6 +39,7 @@ help                 Show this help
 init                 Scaffold config files for declared languages
 install-hooks        Install pre-commit hooks
 lint                 Run all linters
+release              Cut a versioned release (usage: make release VERSION=1.6.0)
 scan                 Run universal scanners (trivy, gitleaks)
 security             Run language-specific security scanners
 test                 Run validation tests
