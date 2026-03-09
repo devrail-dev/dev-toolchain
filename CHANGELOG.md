@@ -7,10 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Rust language ecosystem support (clippy, rustfmt, cargo-audit, cargo-deny, cargo test)
+- Terragrunt companion tool for Terraform (format checking, HCL validation)
+- `make fix` target for in-place formatting across all languages
+- `make check` pre-push hook for full validation before push
+- `make release VERSION=x.y.z` target for manual version releases
+- Tool version manifest (`report-tool-versions.sh`) for release artifacts
+- git-cliff for automated changelog generation
+
 ### Changed
 
 - Updated STABILITY.md from beta to v1 stable
-- Updated README with all 7 languages in tools table
+- Updated README with all 8 languages in tools table
+- Bumped conventional-commits hook to v1.1.0 (all language and workflow scopes)
+- Added critical rule 8 — update documentation when changing behavior
+
+### Fixed
+
+- Added missing clippy and rustfmt rustup components to Rust toolchain
 
 ## [1.4.0] - 2026-03-01
 
