@@ -120,7 +120,7 @@ jobs:
   # Generate and attach tool version manifest to GitHub release
   version-manifest:
     needs: [build-and-push]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && needs.build-and-push.result == 'success' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
