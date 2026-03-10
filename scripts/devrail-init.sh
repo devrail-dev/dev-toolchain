@@ -45,6 +45,12 @@ warn() { printf '\033[0;33m⚠\033[0m %s\n' "$1"; }
 error() { printf '\033[0;31m✗\033[0m %s\n' "$1" >&2; }
 ask() { printf '\033[0;36m?\033[0m %s ' "$1"; }
 
+# Read user input from /dev/tty so interactive mode works when piped via
+# curl | bash (where stdin is consumed by the script content).
+prompt_read() {
+  read -r "$@" </dev/tty
+}
+
 die() {
   error "$1"
   exit 1
@@ -80,7 +86,7 @@ scaffold() {
     else
       ask "$path exists. [s]kip / [o]verwrite / [b]ackup+overwrite?"
       local choice
-      read -r choice
+      prompt_read choice
       case "$choice" in
       o | O)
         if $OPT_DRY_RUN; then
@@ -254,7 +260,7 @@ prompt_languages() {
   echo ""
   ask "Enter numbers separated by spaces (e.g. 1 2 5), or 'none':"
   local choices
-  read -r choices
+  prompt_read choices
 
   if [ "$choices" = "none" ] || [ -z "$choices" ]; then
     return
@@ -283,7 +289,7 @@ prompt_ci_platform() {
   echo ""
   ask "CI platform? [g]ithub / [l]ab (GitLab) / [n]one:"
   local choice
-  read -r choice
+  prompt_read choice
   case "$choice" in
   g | G | github) CI_PLATFORM="github" ;;
   l | L | gitlab) CI_PLATFORM="gitlab" ;;
@@ -319,22 +325,22 @@ prompt_layers() {
 
   ask "1. Agent standards — CLAUDE.md, AGENTS.md, .cursorrules, .opencode/ [Y/n]"
   local c1
-  read -r c1
+  prompt_read c1
   [ "$c1" != "n" ] && [ "$c1" != "N" ] && LAYER_1=true
 
   ask "2. Pre-commit hooks — .pre-commit-config.yaml [Y/n]"
   local c2
-  read -r c2
+  prompt_read c2
   [ "$c2" != "n" ] && [ "$c2" != "N" ] && LAYER_2=true
 
   ask "3. Makefile + container — Makefile, .devrail.yml, DEVELOPMENT.md [Y/n]"
   local c3
-  read -r c3
+  prompt_read c3
   [ "$c3" != "n" ] && [ "$c3" != "N" ] && LAYER_3=true
 
   ask "4. CI pipeline — GitHub Actions or GitLab CI [Y/n]"
   local c4
-  read -r c4
+  prompt_read c4
   [ "$c4" != "n" ] && [ "$c4" != "N" ] && LAYER_4=true
 }
 
@@ -682,7 +688,7 @@ install_makefile() {
     warn "existing Makefile detected (not DevRail-managed)"
     ask "Backup to Makefile.pre-devrail and install DevRail Makefile? [Y/n]"
     local choice
-    read -r choice
+    prompt_read choice
     if [ "$choice" = "n" ] || [ "$choice" = "N" ]; then
       SKIPPED+=("Makefile")
       return
