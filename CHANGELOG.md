@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `devrail-init.sh` progressive adoption script for bootstrapping DevRail in any project
+- `community.general` Ansible collection in container (yaml callback, json_query, common modules)
+
+### Fixed
+
+- Interactive prompts now read from `/dev/tty` so `curl | bash` works correctly
+- Version-manifest CI job no longer skipped on tag push
+
 ## [1.6.0] - 2026-03-09
 
 ### Added
