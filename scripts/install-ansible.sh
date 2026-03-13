@@ -6,8 +6,9 @@
 # Dependencies: python3, pip, lib/log.sh, lib/platform.sh
 #
 # Tools installed:
-#   - ansible-lint  (Ansible playbook/role linter — pulls ansible-core as dependency)
-#   - molecule      (Ansible role testing framework)
+#   - ansible-lint          (Ansible playbook/role linter — pulls ansible-core as dependency)
+#   - molecule              (Ansible role testing framework)
+#   - community.general     (Ansible collection — yaml callback, json_query, common modules)
 
 set -euo pipefail
 
@@ -67,6 +68,16 @@ else
   python3 -m pip install --break-system-packages molecule 2>/dev/null ||
     python3 -m pip install molecule
   log_info "molecule installed successfully"
+fi
+
+# Install community.general collection (idempotent)
+# Required for yaml callback plugin, json_query filter, and many common modules
+if ansible-galaxy collection list community.general &>/dev/null; then
+  log_info "community.general collection is already installed, skipping"
+else
+  log_info "Installing community.general Ansible collection"
+  ansible-galaxy collection install community.general
+  log_info "community.general collection installed successfully"
 fi
 
 log_info "Ansible tooling installation complete"

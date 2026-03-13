@@ -50,6 +50,14 @@ check_tool() {
 check_tool "ansible-lint" "--version"
 check_tool "molecule" "--version"
 
+# Verify community.general collection is installed
+if ansible-galaxy collection list community.general &>/dev/null; then
+  log_info "community.general collection — OK"
+else
+  log_error "community.general Ansible collection is not installed"
+  FAILURES=$((FAILURES + 1))
+fi
+
 if [[ "${FAILURES}" -gt 0 ]]; then
   log_error "Ansible tooling validation failed: ${FAILURES} tool(s) missing or broken"
   exit 1
