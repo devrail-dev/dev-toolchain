@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `community.general` Ansible collection now actually installs (`ansible-galaxy collection list` exits 0 even when not installed; check grep output instead)
+
 ## [1.7.0] - 2026-03-13
 
 ### Added
