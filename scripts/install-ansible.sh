@@ -72,7 +72,9 @@ fi
 
 # Install community.general collection (idempotent)
 # Required for yaml callback plugin, json_query filter, and many common modules
-if ansible-galaxy collection list community.general &>/dev/null; then
+# Note: ansible-galaxy collection list exits 0 even when not installed,
+# so we check the output for the collection name instead of the exit code.
+if ansible-galaxy collection list community.general 2>/dev/null | grep -q community.general; then
   log_info "community.general collection is already installed, skipping"
 else
   log_info "Installing community.general Ansible collection"

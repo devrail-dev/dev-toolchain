@@ -51,7 +51,9 @@ check_tool "ansible-lint" "--version"
 check_tool "molecule" "--version"
 
 # Verify community.general collection is installed
-if ansible-galaxy collection list community.general &>/dev/null; then
+# Note: ansible-galaxy collection list exits 0 even when not installed,
+# so we check the output for the collection name instead of the exit code.
+if ansible-galaxy collection list community.general 2>/dev/null | grep -q community.general; then
   log_info "community.general collection — OK"
 else
   log_error "community.general Ansible collection is not installed"
