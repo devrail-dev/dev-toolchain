@@ -12,7 +12,7 @@
 # Tool ecosystems:
 #   Python    — ruff, bandit, mypy, pytest, semgrep
 #   Bash      — shellcheck, shfmt, bats
-#   Terraform — terraform, tflint, tfsec, checkov, terraform-docs
+#   Terraform — terraform, tflint, checkov, terraform-docs
 #   Ansible   — ansible-lint, molecule
 #   Ruby      — rubocop, reek, brakeman, bundler-audit, rspec, srb
 #   Go        — go, golangci-lint, gofumpt, govulncheck
@@ -101,7 +101,6 @@ _json() {
   # Terraform
   _tv terraform "terraform version"
   _tv tflint "tflint --version"
-  _tv tfsec "tfsec --version"
   _tv checkov "checkov --version"
   _tv terraform-docs "terraform-docs --version"
 

@@ -51,7 +51,7 @@ test                 Run validation tests
 |----------------|---------------------------------------------------|
 | Python         | ruff, bandit, semgrep, pytest, mypy               |
 | Bash           | shellcheck, shfmt, bats                           |
-| Terraform      | tflint, tfsec, checkov, terraform-docs, terraform, terragrunt |
+| Terraform      | tflint, trivy config, checkov, terraform-docs, terraform, terragrunt |
 | Ansible        | ansible-lint, molecule                            |
 | Ruby           | rubocop, reek, brakeman, bundler-audit, rspec, sorbet |
 | Go             | golangci-lint, gofumpt, govulncheck, go test      |

@@ -8,7 +8,6 @@
 #
 # Tools installed:
 #   - tflint          (Terraform linter — built in Go builder stage)
-#   - tfsec           (Terraform security scanner — built in Go builder stage)
 #   - checkov         (IaC security scanner — installed via pip)
 #   - terraform-docs  (Terraform documentation gen — built in Go builder stage)
 #   - terraform       (Terraform CLI — downloaded from HashiCorp)
@@ -33,7 +32,7 @@ source "${DEVRAIL_LIB}/platform.sh"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   log_info "install-terraform.sh — Install Terraform tooling for DevRail"
   log_info "Usage: bash scripts/install-terraform.sh [--help]"
-  log_info "Tools: tflint, tfsec, checkov, terraform-docs, terraform, terragrunt"
+  log_info "Tools: tflint, checkov, terraform-docs, terraform, terragrunt"
   log_info "Note: terratest is a Go module dependency — not installed as a binary"
   exit 0
 fi
@@ -58,13 +57,6 @@ if command -v tflint &>/dev/null; then
   log_info "tflint is already installed"
 else
   log_warn "tflint not found — expected to be copied from Go builder stage"
-fi
-
-# Verify tfsec is available (built in Go builder stage and copied)
-if command -v tfsec &>/dev/null; then
-  log_info "tfsec is already installed"
-else
-  log_warn "tfsec not found — expected to be copied from Go builder stage"
 fi
 
 # Verify terraform-docs is available (built in Go builder stage and copied)

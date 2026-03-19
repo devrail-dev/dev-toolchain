@@ -24,7 +24,7 @@ These eight rules are non-negotiable. Every developer and every AI agent must fo
 
 6. **Use the shared logging library.** No raw `echo` for status messages. Use `log_info`, `log_warn`, `log_error`, `log_debug`, and `die` from `lib/log.sh`.
 
-7. **Never suppress failing checks.** When a lint, format, security, or test check fails, fix the underlying issue. Never comment out code, add suppression annotations (`# noqa`, `# nosec`, `#tfsec:ignore`, `// nolint`), disable rules, or mark CI jobs as allowed-to-fail to bypass a failing check. If a finding is a confirmed false positive, document the justification inline alongside the tool's designated suppression mechanism.
+7. **Never suppress failing checks.** When a lint, format, security, or test check fails, fix the underlying issue. Never comment out code, add suppression annotations (`# noqa`, `# nosec`, `// nolint`), disable rules, or mark CI jobs as allowed-to-fail to bypass a failing check. If a finding is a confirmed false positive, document the justification inline alongside the tool's designated suppression mechanism.
 
 8. **Update documentation when changing behavior.** When a change affects public interfaces, configuration, CLI usage, or setup steps, update the relevant documentation (README, DEVELOPMENT.md, inline docs) in the same commit or PR. Do not leave documentation out of sync with code.
 
