@@ -1,6 +1,6 @@
 # === Builder stage: Go-based tools ===
 # Compiles Go-based tools (shfmt, tflint, terraform-docs, trivy, gitleaks)
-FROM golang:1.24-bookworm AS go-builder
+FROM golang:1.25-bookworm AS go-builder
 
 ARG TARGETARCH
 ENV GOTOOLCHAIN=auto
