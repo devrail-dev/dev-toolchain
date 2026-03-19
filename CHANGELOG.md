@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-03-19
+
 ### Changed
 
 - Bump Go builder from 1.24 to 1.25 (fixes govulncheck on Go 1.25 projects)
