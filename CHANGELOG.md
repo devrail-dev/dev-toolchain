@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace deprecated tfsec with `trivy config` for Terraform security scanning
+- Pin gitleaks to v8.30.0 with `-ldflags` for proper version reporting
+
+### Removed
+
+- tfsec (deprecated, merged into Trivy)
+
 ## [1.7.1] - 2026-03-16
 
 ### Fixed
