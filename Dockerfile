@@ -1,5 +1,5 @@
 # === Builder stage: Go-based tools ===
-# Compiles Go-based tools (shfmt, tflint, tfsec, terraform-docs, trivy, gitleaks)
+# Compiles Go-based tools (shfmt, tflint, terraform-docs, trivy, gitleaks)
 FROM golang:1.24-bookworm AS go-builder
 
 ARG TARGETARCH
@@ -11,14 +11,13 @@ RUN go install mvdan.cc/sh/v3/cmd/shfmt@latest
 # Install tflint
 RUN go install github.com/terraform-linters/tflint@latest
 
-# Install tfsec
-RUN go install github.com/aquasecurity/tfsec/cmd/tfsec@latest
-
 # Install terraform-docs
 RUN go install github.com/terraform-docs/terraform-docs@latest
 
-# Install gitleaks
-RUN go install github.com/zricethezav/gitleaks/v8@latest
+# Install gitleaks (pin version + inject via ldflags so `gitleaks version` reports correctly)
+ARG GITLEAKS_VERSION=v8.30.0
+RUN go install -ldflags "-X github.com/zricethezav/gitleaks/v8/version.Version=${GITLEAKS_VERSION}" \
+    github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
 
 # Install golangci-lint v2
 RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
@@ -121,7 +120,6 @@ COPY --from=go-builder /usr/local/go /usr/local/go
 # Copy Go-built binaries from builder
 COPY --from=go-builder /go/bin/shfmt /usr/local/bin/shfmt
 COPY --from=go-builder /go/bin/tflint /usr/local/bin/tflint
-COPY --from=go-builder /go/bin/tfsec /usr/local/bin/tfsec
 COPY --from=go-builder /go/bin/terraform-docs /usr/local/bin/terraform-docs
 COPY --from=go-builder /go/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=go-builder /go/bin/golangci-lint /usr/local/bin/golangci-lint

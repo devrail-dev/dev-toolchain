@@ -697,7 +697,7 @@ _security: _check-config
 	fi; \
 	if [ -n "$(HAS_TERRAFORM)" ]; then \
 		ran_languages="$${ran_languages}\"terraform\","; \
-		tfsec . || { overall_exit=1; failed_languages="$${failed_languages}\"terraform:tfsec\","; }; \
+		trivy config --exit-code 1 . || { overall_exit=1; failed_languages="$${failed_languages}\"terraform:trivy-config\","; }; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
 			duration=$$((end_time - start_time)); \
@@ -886,7 +886,7 @@ _docs: _check-config
 		if [ -n "$(HAS_TERRAFORM)" ]; then \
 			_tv terraform "terraform version"; \
 			_tv tflint "tflint --version"; \
-			_tv tfsec "tfsec --version"; \
+			_tv trivy "trivy --version"; \
 			_tv checkov "checkov --version"; \
 			_tv terraform-docs "terraform-docs --version"; \
 			_tv terragrunt "terragrunt --version"; \
