@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bump Go builder from 1.24 to 1.25 (fixes govulncheck on Go 1.25 projects)
+- Add critical rule 9 to agent instructions — ensure DevRail Makefile is active (GNUmakefile precedence)
+
 ## [1.8.0] - 2026-03-19
 
 ### Changed
