@@ -46,7 +46,7 @@ jobs:
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.
       - name: Run trivy OS package scan (blocking)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           severity: CRITICAL,HIGH
@@ -59,7 +59,7 @@ jobs:
       # are uploaded to the GitHub Security tab for visibility. Not blocking
       # because Go binary CVEs depend on upstream tool releases we don't control.
       - name: Run trivy full scan (SARIF, advisory)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         if: always()
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
