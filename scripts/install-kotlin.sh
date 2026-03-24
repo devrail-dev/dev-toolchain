@@ -71,7 +71,7 @@ install_detekt() {
     -o /usr/local/lib/detekt-cli.jar
 
   # Create wrapper script
-  cat > /usr/local/bin/detekt-cli << 'WRAPPER'
+  cat >/usr/local/bin/detekt-cli <<'WRAPPER'
 #!/usr/bin/env bash
 exec java -jar /usr/local/lib/detekt-cli.jar "$@"
 WRAPPER
