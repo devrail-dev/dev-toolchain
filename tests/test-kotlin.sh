@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEVRAIL_LIB="${DEVRAIL_LIB:-${SCRIPT_DIR}/../lib}"
+
+# shellcheck source=../lib/log.sh
 source "${DEVRAIL_LIB}/log.sh"
 
 log_info "Testing Kotlin tooling installation..."
