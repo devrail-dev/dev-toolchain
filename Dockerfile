@@ -40,6 +40,14 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf \
     | bash
 RUN cargo binstall --no-confirm cargo-audit cargo-deny
 
+# === Swift builder stage ===
+# Provides Swift toolchain (swiftc, swift build, swift test, SPM)
+FROM swift:6.1-slim-bookworm AS swift-builder
+
+# === JDK builder stage ===
+# Provides JDK 21 for Kotlin tooling (ktlint, detekt, Gradle)
+FROM eclipse-temurin:21-jdk-bookworm AS jdk-builder
+
 # === Node.js base: provides Node runtime for JS/TS tooling ===
 FROM node:22-bookworm-slim AS node-base
 
@@ -110,8 +118,17 @@ COPY --from=rust-builder /usr/local/cargo /usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
 
-# Set up environment
-ENV PATH="/opt/devrail/bin:/usr/local/cargo/bin:/usr/local/go/bin:${PATH}"
+# Copy Swift toolchain from swift-builder (selective: binaries + runtime libs only)
+COPY --from=swift-builder /usr/bin/swift /usr/bin/swiftc /usr/bin/swift-build /usr/bin/swift-test /usr/bin/swift-package /usr/bin/swift-run /usr/local/swift/bin/
+COPY --from=swift-builder /usr/lib/swift /usr/local/swift/lib/swift
+COPY --from=swift-builder /usr/lib/swift_static /usr/local/swift/lib/swift_static
+
+# Copy JDK 21 from jdk-builder (required for Kotlin tooling: ktlint, detekt, Gradle)
+COPY --from=jdk-builder /opt/java/openjdk /opt/java/openjdk
+ENV JAVA_HOME=/opt/java/openjdk
+
+# Set up environment (consolidated PATH — all language runtimes in one line)
+ENV PATH="/opt/devrail/bin:/usr/local/cargo/bin:/usr/local/go/bin:/usr/local/swift/bin:/opt/java/openjdk/bin:${PATH}"
 ENV DEVRAIL_LIB="/opt/devrail/lib"
 
 # Copy Go SDK from builder (required at runtime by golangci-lint, govulncheck)
@@ -135,6 +152,8 @@ RUN bash /opt/devrail/scripts/install-ruby.sh
 RUN bash /opt/devrail/scripts/install-go.sh
 RUN bash /opt/devrail/scripts/install-javascript.sh
 RUN bash /opt/devrail/scripts/install-rust.sh
+RUN bash /opt/devrail/scripts/install-swift.sh
+RUN bash /opt/devrail/scripts/install-kotlin.sh
 RUN bash /opt/devrail/scripts/install-universal.sh
 
 # Allow git operations on mounted workspaces with different ownership
