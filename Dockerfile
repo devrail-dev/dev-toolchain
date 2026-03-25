@@ -42,7 +42,7 @@ RUN cargo binstall --no-confirm cargo-audit cargo-deny
 
 # === Swift builder stage ===
 # Provides Swift toolchain (swiftc, swift build, swift test, SPM)
-FROM swift:6.1-slim-bookworm AS swift-builder
+FROM swift:6.1-bookworm AS swift-builder
 
 # === JDK builder stage ===
 # Provides JDK 21 for Kotlin tooling (ktlint, detekt, Gradle)
