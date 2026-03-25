@@ -74,33 +74,14 @@ install_swiftlint() {
   log_info "SwiftLint installed successfully"
 }
 
-install_swift_format() {
+verify_swift_format() {
+  # swift-format is built from source in the Dockerfile swift-builder stage
+  # and COPY'd to /usr/local/bin/swift-format. This function only verifies.
   if command -v swift-format &>/dev/null; then
-    log_info "swift-format already installed, skipping"
-    return 0
-  fi
-
-  log_info "Installing swift-format..."
-  local version="601.0.0"
-  local arch
-  arch="$(dpkg --print-architecture)"
-
-  if [ "${arch}" = "amd64" ]; then
-    curl -fsSL "https://github.com/swiftlang/swift-format/releases/download/${version}/swift-format-${version}-linux-x86_64.tar.gz" \
-      -o "/tmp/swift-format.tar.gz"
-    tar xzf /tmp/swift-format.tar.gz -C /tmp
-    install -m 755 /tmp/swift-format /usr/local/bin/swift-format
-    rm -f /tmp/swift-format.tar.gz /tmp/swift-format
+    log_info "swift-format is already installed"
   else
-    log_warn "swift-format pre-built binary not available for ${arch}, building from source..."
-    git clone --depth 1 --branch "${version}" https://github.com/swiftlang/swift-format.git /tmp/swift-format-src
-    (cd /tmp/swift-format-src && swift build -c release)
-    install -m 755 /tmp/swift-format-src/.build/release/swift-format /usr/local/bin/swift-format
-    rm -rf /tmp/swift-format-src
+    log_warn "swift-format not found — expected to be copied from Swift builder stage"
   fi
-
-  require_cmd "swift-format" "Failed to install swift-format"
-  log_info "swift-format installed successfully"
 }
 
 # --- Main ---
@@ -114,6 +95,6 @@ else
 fi
 
 install_swiftlint
-install_swift_format
+verify_swift_format
 
 log_info "Swift tools installed successfully"
