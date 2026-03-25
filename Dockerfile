@@ -46,7 +46,7 @@ FROM swift:6.1-slim-bookworm AS swift-builder
 
 # === JDK builder stage ===
 # Provides JDK 21 for Kotlin tooling (ktlint, detekt, Gradle)
-FROM eclipse-temurin:21-jdk-bookworm AS jdk-builder
+FROM eclipse-temurin:21-jdk AS jdk-builder
 
 # === Node.js base: provides Node runtime for JS/TS tooling ===
 FROM node:22-bookworm-slim AS node-base
