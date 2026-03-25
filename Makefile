@@ -43,6 +43,8 @@ HAS_RUBY       := $(filter ruby,$(LANGUAGES))
 HAS_GO         := $(filter go,$(LANGUAGES))
 HAS_JAVASCRIPT := $(filter javascript,$(LANGUAGES))
 HAS_RUST       := $(filter rust,$(LANGUAGES))
+HAS_SWIFT      := $(filter swift,$(LANGUAGES))
+HAS_KOTLIN     := $(filter kotlin,$(LANGUAGES))
 
 # ---------------------------------------------------------------------------
 # .PHONY declarations
@@ -283,6 +285,39 @@ _lint: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_SWIFT)" ]; then \
+		ran_languages="$${ran_languages}\"swift\","; \
+		swift_files=$$(find . -name '*.swift' -not -path './.git/*' -not -path './.build/*' -not -path './DerivedData/*' 2>/dev/null); \
+		if [ -n "$$swift_files" ]; then \
+			swiftlint lint --strict || { overall_exit=1; failed_languages="$${failed_languages}\"swift\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping swift lint: no .swift files found","language":"swift"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_KOTLIN)" ]; then \
+		ran_languages="$${ran_languages}\"kotlin\","; \
+		kt_files=$$(find . \( -name '*.kt' -o -name '*.kts' \) -not -path './.git/*' -not -path './build/*' -not -path './.gradle/*' 2>/dev/null); \
+		if [ -n "$$kt_files" ]; then \
+			ktlint || { overall_exit=1; failed_languages="$${failed_languages}\"kotlin:ktlint\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping kotlin lint: no .kt/.kts files found","language":"kotlin"}' >&2; \
+		fi; \
+		if [ -f "detekt.yml" ] && [ -n "$$kt_files" ]; then \
+			detekt-cli --build-upon-default-config --config detekt.yml || { overall_exit=1; failed_languages="$${failed_languages}\"kotlin:detekt\","; }; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -401,6 +436,36 @@ _format: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_SWIFT)" ]; then \
+		ran_languages="$${ran_languages}\"swift\","; \
+		swift_files=$$(find . -name '*.swift' -not -path './.git/*' -not -path './.build/*' -not -path './DerivedData/*' 2>/dev/null); \
+		if [ -n "$$swift_files" ]; then \
+			swift-format lint --strict -r . || { overall_exit=1; failed_languages="$${failed_languages}\"swift\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping swift format: no .swift files found","language":"swift"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_KOTLIN)" ]; then \
+		ran_languages="$${ran_languages}\"kotlin\","; \
+		kt_files=$$(find . \( -name '*.kt' -o -name '*.kts' \) -not -path './.git/*' -not -path './build/*' -not -path './.gradle/*' 2>/dev/null); \
+		if [ -n "$$kt_files" ]; then \
+			ktlint --format --dry-run || { overall_exit=1; failed_languages="$${failed_languages}\"kotlin\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping kotlin format: no .kt/.kts files found","language":"kotlin"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -511,6 +576,36 @@ _fix: _check-config
 			cargo fmt --all || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping rust fix: no .rs files found","language":"rust"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_SWIFT)" ]; then \
+		ran_languages="$${ran_languages}\"swift\","; \
+		swift_files=$$(find . -name '*.swift' -not -path './.git/*' -not -path './.build/*' -not -path './DerivedData/*' 2>/dev/null); \
+		if [ -n "$$swift_files" ]; then \
+			swift-format format -i -r . || { overall_exit=1; failed_languages="$${failed_languages}\"swift\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping swift fix: no .swift files found","language":"swift"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_KOTLIN)" ]; then \
+		ran_languages="$${ran_languages}\"kotlin\","; \
+		kt_files=$$(find . \( -name '*.kt' -o -name '*.kts' \) -not -path './.git/*' -not -path './build/*' -not -path './.gradle/*' 2>/dev/null); \
+		if [ -n "$$kt_files" ]; then \
+			ktlint --format || { overall_exit=1; failed_languages="$${failed_languages}\"kotlin\","; }; \
+		else \
+			echo '{"level":"info","msg":"skipping kotlin fix: no .kt/.kts files found","language":"kotlin"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -656,6 +751,37 @@ _test: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	if [ -n "$(HAS_SWIFT)" ]; then \
+		swift_files=$$(find . -name '*.swift' -not -path './.git/*' -not -path './.build/*' -not -path './DerivedData/*' 2>/dev/null); \
+		if [ -n "$$swift_files" ] && [ -f "Package.swift" ]; then \
+			ran_languages="$${ran_languages}\"swift\","; \
+			swift test || { overall_exit=1; failed_languages="$${failed_languages}\"swift\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"swift\","; \
+			echo '{"level":"info","msg":"skipping swift tests: no .swift files or Package.swift found","language":"swift"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_KOTLIN)" ]; then \
+		if [ -f "build.gradle.kts" ] || [ -f "build.gradle" ]; then \
+			ran_languages="$${ran_languages}\"kotlin\","; \
+			gradle test || { overall_exit=1; failed_languages="$${failed_languages}\"kotlin\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"kotlin\","; \
+			echo '{"level":"info","msg":"skipping kotlin tests: no build.gradle.kts or build.gradle found","language":"kotlin"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ -z "$${ran_languages}" ] && [ -n "$${skipped_languages}" ]; then \
@@ -789,6 +915,25 @@ _security: _check-config
 			cargo deny check || { overall_exit=1; failed_languages="$${failed_languages}\"rust:cargo-deny\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping cargo deny: no deny.toml found","language":"rust"}' >&2; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
+	if [ -n "$(HAS_SWIFT)" ]; then \
+		skipped_languages="$${skipped_languages}\"swift\","; \
+		echo '{"level":"info","msg":"skipping swift security: no language-specific scanner","language":"swift"}' >&2; \
+	fi; \
+	if [ -n "$(HAS_KOTLIN)" ]; then \
+		if [ -f "build.gradle.kts" ] || [ -f "build.gradle" ]; then \
+			ran_languages="$${ran_languages}\"kotlin\","; \
+			gradle dependencyCheckAnalyze || { overall_exit=1; failed_languages="$${failed_languages}\"kotlin:owasp\","; }; \
+		else \
+			skipped_languages="$${skipped_languages}\"kotlin\","; \
+			echo '{"level":"info","msg":"skipping kotlin security: no build.gradle.kts or build.gradle found","language":"kotlin"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
