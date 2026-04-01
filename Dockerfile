@@ -41,14 +41,18 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf \
 RUN cargo binstall --no-confirm cargo-audit cargo-deny
 
 # === Swift builder stage ===
-# Provides Swift toolchain and builds swift-format from source
-# (swift-format has no pre-built Linux binaries)
+# Builds swift-format and SwiftLint from source (no pre-built arm64 Linux binaries)
 FROM swift:6.1-bookworm AS swift-builder
 RUN git clone --depth 1 --branch 602.0.0 https://github.com/swiftlang/swift-format.git /tmp/swift-format \
     && cd /tmp/swift-format \
     && swift build -c release \
     && install -m 755 .build/release/swift-format /usr/local/bin/swift-format \
     && rm -rf /tmp/swift-format
+RUN git clone --depth 1 --branch 0.58.0 https://github.com/realm/SwiftLint.git /tmp/SwiftLint \
+    && cd /tmp/SwiftLint \
+    && swift build -c release \
+    && install -m 755 .build/release/swiftlint /usr/local/bin/swiftlint \
+    && rm -rf /tmp/SwiftLint
 
 # === JDK builder stage ===
 # Provides JDK 21 for Kotlin tooling (ktlint, detekt, Gradle)
@@ -129,6 +133,7 @@ COPY --from=swift-builder /usr/bin/swift /usr/bin/swiftc /usr/bin/swift-build /u
 COPY --from=swift-builder /usr/lib/swift /usr/local/swift/lib/swift
 COPY --from=swift-builder /usr/lib/swift_static /usr/local/swift/lib/swift_static
 COPY --from=swift-builder /usr/local/bin/swift-format /usr/local/bin/swift-format
+COPY --from=swift-builder /usr/local/bin/swiftlint /usr/local/bin/swiftlint
 
 # Copy JDK 21 from jdk-builder (required for Kotlin tooling: ktlint, detekt, Gradle)
 COPY --from=jdk-builder /opt/java/openjdk /opt/java/openjdk
