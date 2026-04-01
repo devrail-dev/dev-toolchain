@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# scripts/install-swift.sh — Install and verify Swift tooling for DevRail
+# scripts/install-swift.sh — Verify Swift tooling for DevRail
 #
-# Purpose: Installs SwiftLint and swift-format, and verifies the Swift toolchain
-#          is available in the dev-toolchain container. The Swift SDK (swiftc, swift
-#          build, swift test, Swift Package Manager) is COPY'd from the swift-builder
-#          stage; this script installs additional tools and confirms all are on PATH.
+# Purpose: Verifies that the Swift toolchain, SwiftLint, and swift-format are
+#          available in the dev-toolchain container. All tools are built in the
+#          swift-builder Dockerfile stage and COPY'd to the runtime image; this
+#          script only confirms they are on PATH.
 # Usage:   bash scripts/install-swift.sh [--help]
 # Dependencies: lib/log.sh, lib/platform.sh
 #
-# Tools installed/verified:
+# Tools verified:
 #   - swift         (Swift compiler — COPY'd from builder)
-#   - swiftlint     (Linter — installed from GitHub releases)
-#   - swift-format  (Formatter — installed from GitHub releases)
+#   - swiftlint     (Linter — built from source in builder)
+#   - swift-format  (Formatter — built from source in builder)
 
 set -euo pipefail
 
@@ -32,46 +32,16 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
-# --- Cleanup trap ---
-TMPDIR_CLEANUP=""
-cleanup() {
-  if [[ -n "${TMPDIR_CLEANUP}" && -d "${TMPDIR_CLEANUP}" ]]; then
-    rm -rf "${TMPDIR_CLEANUP}"
-  fi
-}
-trap cleanup EXIT
+# --- Tool verification functions ---
 
-# --- Tool installation functions ---
-
-install_swiftlint() {
+verify_swiftlint() {
+  # SwiftLint is built from source in the Dockerfile swift-builder stage
+  # and COPY'd to /usr/local/bin/swiftlint. This function only verifies.
   if command -v swiftlint &>/dev/null; then
-    log_info "swiftlint already installed, skipping"
-    return 0
-  fi
-
-  log_info "Installing SwiftLint..."
-  TMPDIR_CLEANUP="$(mktemp -d)"
-  local arch
-  arch="$(dpkg --print-architecture)"
-  # SwiftLint provides pre-built Linux binaries
-  local version="0.58.0"
-  if [ "${arch}" = "amd64" ]; then
-    curl -fsSL "https://github.com/realm/SwiftLint/releases/download/${version}/swiftlint_linux.zip" \
-      -o "${TMPDIR_CLEANUP}/swiftlint.zip"
-    unzip -q "${TMPDIR_CLEANUP}/swiftlint.zip" -d "${TMPDIR_CLEANUP}"
-    install -m 755 "${TMPDIR_CLEANUP}/swiftlint" /usr/local/bin/swiftlint
-  elif [ "${arch}" = "arm64" ]; then
-    curl -fsSL "https://github.com/realm/SwiftLint/releases/download/${version}/swiftlint_linux_aarch64.zip" \
-      -o "${TMPDIR_CLEANUP}/swiftlint.zip"
-    unzip -q "${TMPDIR_CLEANUP}/swiftlint.zip" -d "${TMPDIR_CLEANUP}"
-    install -m 755 "${TMPDIR_CLEANUP}/swiftlint" /usr/local/bin/swiftlint
+    log_info "swiftlint is already installed"
   else
-    log_error "SwiftLint: unsupported architecture ${arch}"
-    return 1
+    log_warn "swiftlint not found — expected to be copied from Swift builder stage"
   fi
-
-  require_cmd "swiftlint" "Failed to install SwiftLint"
-  log_info "SwiftLint installed successfully"
 }
 
 verify_swift_format() {
@@ -94,7 +64,7 @@ else
   log_warn "swift not found — expected to be copied from Swift builder stage"
 fi
 
-install_swiftlint
+verify_swiftlint
 verify_swift_format
 
 log_info "Swift tools installed successfully"
