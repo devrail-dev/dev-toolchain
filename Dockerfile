@@ -28,6 +28,12 @@ RUN go install mvdan.cc/gofumpt@latest
 # Install govulncheck
 RUN go install golang.org/x/vuln/cmd/govulncheck@latest
 
+# Install kustomize (Kubernetes manifest overlay tool)
+RUN go install sigs.k8s.io/kustomize/kustomize/v5@latest
+
+# Install kubeconform (Kubernetes manifest schema validation)
+RUN go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+
 # === Rust builder stage ===
 # Provides Rust toolchain (rustup + cargo + rustc + clippy + rustfmt) and
 # installs cargo-audit and cargo-deny via cargo-binstall.
@@ -154,6 +160,8 @@ COPY --from=go-builder /go/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=go-builder /go/bin/golangci-lint /usr/local/bin/golangci-lint
 COPY --from=go-builder /go/bin/gofumpt /usr/local/bin/gofumpt
 COPY --from=go-builder /go/bin/govulncheck /usr/local/bin/govulncheck
+COPY --from=go-builder /go/bin/kustomize /usr/local/bin/kustomize
+COPY --from=go-builder /go/bin/kubeconform /usr/local/bin/kubeconform
 
 # Run per-language install scripts
 RUN bash /opt/devrail/scripts/install-python.sh

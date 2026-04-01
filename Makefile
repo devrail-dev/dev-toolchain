@@ -318,6 +318,24 @@ _lint: _check-config
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	kustomize_files=$$(find . -name 'kustomization.yaml' -not -path './.git/*' 2>/dev/null); \
+	if [ -n "$$kustomize_files" ]; then \
+		ran_languages="$${ran_languages}\"kubernetes:kustomize\","; \
+		kustomize_exit=0; \
+		for kdir in $$(dirname $$kustomize_files); do \
+			kustomize build "$$kdir" 2>/dev/null | kubeconform -strict -summary -output json > /dev/null 2>&1 || { kustomize_exit=1; }; \
+		done; \
+		if [ $$kustomize_exit -ne 0 ]; then \
+			overall_exit=1; \
+			failed_languages="$${failed_languages}\"kubernetes:kustomize\","; \
+		fi; \
+		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+			end_time=$$(date +%s%3N); \
+			duration=$$((end_time - start_time)); \
+			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+			exit $$overall_exit; \
+		fi; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
