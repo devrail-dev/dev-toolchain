@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# scripts/install-swift.sh — Install and verify Swift tooling for DevRail
+# scripts/install-swift.sh — Verify Swift tooling for DevRail
 #
-# Purpose: Installs SwiftLint and swift-format, and verifies the Swift toolchain
-#          is available in the dev-toolchain container. The Swift SDK (swiftc, swift
-#          build, swift test, Swift Package Manager) is COPY'd from the swift-builder
-#          stage; this script installs additional tools and confirms all are on PATH.
+# Purpose: Verifies that the Swift toolchain, SwiftLint, and swift-format are
+#          available in the dev-toolchain container. All tools are built in the
+#          swift-builder Dockerfile stage and COPY'd to the runtime image; this
+#          script only confirms they are on PATH.
 # Usage:   bash scripts/install-swift.sh [--help]
 # Dependencies: lib/log.sh, lib/platform.sh
 #
-# Tools installed/verified:
+# Tools verified:
 #   - swift         (Swift compiler — COPY'd from builder)
-#   - swiftlint     (Linter — installed from GitHub releases)
-#   - swift-format  (Formatter — installed from GitHub releases)
+#   - swiftlint     (Linter — built from source in builder)
+#   - swift-format  (Formatter — built from source in builder)
 
 set -euo pipefail
 
@@ -26,75 +26,34 @@ source "${DEVRAIL_LIB}/platform.sh"
 
 # --- Help ---
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  log_info "install-swift.sh — Install and verify Swift tooling for DevRail"
+  log_info "install-swift.sh — Verify Swift tooling for DevRail"
   log_info "Usage: bash scripts/install-swift.sh [--help]"
   log_info "Tools: swift, swiftlint, swift-format"
   exit 0
 fi
 
-# --- Cleanup trap ---
-TMPDIR_CLEANUP=""
-cleanup() {
-  if [[ -n "${TMPDIR_CLEANUP}" && -d "${TMPDIR_CLEANUP}" ]]; then
-    rm -rf "${TMPDIR_CLEANUP}"
-  fi
-}
-trap cleanup EXIT
-
-# --- Tool installation functions ---
-
-install_swiftlint() {
-  if command -v swiftlint &>/dev/null; then
-    log_info "swiftlint already installed, skipping"
-    return 0
-  fi
-
-  log_info "Installing SwiftLint..."
-  TMPDIR_CLEANUP="$(mktemp -d)"
-  local arch
-  arch="$(dpkg --print-architecture)"
-  # SwiftLint provides pre-built Linux binaries
-  local version="0.58.0"
-  if [ "${arch}" = "amd64" ]; then
-    curl -fsSL "https://github.com/realm/SwiftLint/releases/download/${version}/swiftlint_linux.zip" \
-      -o "${TMPDIR_CLEANUP}/swiftlint.zip"
-    unzip -q "${TMPDIR_CLEANUP}/swiftlint.zip" -d "${TMPDIR_CLEANUP}"
-    install -m 755 "${TMPDIR_CLEANUP}/swiftlint" /usr/local/bin/swiftlint
-  elif [ "${arch}" = "arm64" ]; then
-    curl -fsSL "https://github.com/realm/SwiftLint/releases/download/${version}/swiftlint_linux_aarch64.zip" \
-      -o "${TMPDIR_CLEANUP}/swiftlint.zip"
-    unzip -q "${TMPDIR_CLEANUP}/swiftlint.zip" -d "${TMPDIR_CLEANUP}"
-    install -m 755 "${TMPDIR_CLEANUP}/swiftlint" /usr/local/bin/swiftlint
-  else
-    log_error "SwiftLint: unsupported architecture ${arch}"
-    return 1
-  fi
-
-  require_cmd "swiftlint" "Failed to install SwiftLint"
-  log_info "SwiftLint installed successfully"
-}
-
-verify_swift_format() {
-  # swift-format is built from source in the Dockerfile swift-builder stage
-  # and COPY'd to /usr/local/bin/swift-format. This function only verifies.
-  if command -v swift-format &>/dev/null; then
-    log_info "swift-format is already installed"
-  else
-    log_warn "swift-format not found — expected to be copied from Swift builder stage"
-  fi
-}
-
 # --- Main ---
-log_info "Installing Swift tools..."
+log_info "Verifying Swift tooling installation"
 
-# Verify Swift compiler is available (COPY'd from builder)
+# Verify Swift compiler (COPY'd from builder)
 if command -v swift &>/dev/null; then
   log_info "swift is already installed"
 else
   log_warn "swift not found — expected to be copied from Swift builder stage"
 fi
 
-install_swiftlint
-verify_swift_format
+# Verify SwiftLint (built from source in builder)
+if command -v swiftlint &>/dev/null; then
+  log_info "swiftlint is already installed"
+else
+  log_warn "swiftlint not found — expected to be copied from Swift builder stage"
+fi
 
-log_info "Swift tools installed successfully"
+# Verify swift-format (built from source in builder)
+if command -v swift-format &>/dev/null; then
+  log_info "swift-format is already installed"
+else
+  log_warn "swift-format not found — expected to be copied from Swift builder stage"
+fi
+
+log_info "Swift tooling verification complete"
