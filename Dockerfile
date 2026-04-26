@@ -60,6 +60,18 @@ RUN git clone --depth 1 --branch 0.58.0 https://github.com/realm/SwiftLint.git /
     && install -m 755 .build/release/swiftlint /usr/local/bin/swiftlint \
     && rm -rf /tmp/SwiftLint
 
+# === Ruby builder stage ===
+# Provides Ruby 3.4 toolchain plus installed gems (rubocop, reek, brakeman,
+# bundler-audit, rspec, sorbet). Debian bookworm ships Ruby 3.1 which cannot
+# parse modern Rails 7+ Gemfiles (`platforms: %i[mri windows]`) — see #25.
+FROM ruby:3.4-slim-bookworm AS ruby-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+COPY lib/ /opt/devrail/lib/
+COPY scripts/install-ruby.sh /opt/devrail/scripts/install-ruby.sh
+RUN bash /opt/devrail/scripts/install-ruby.sh
+
 # === JDK builder stage ===
 # Provides JDK 21 for Kotlin tooling (ktlint, detekt, Gradle)
 FROM eclipse-temurin:21-jdk AS jdk-builder
@@ -88,9 +100,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
-    ruby \
-    ruby-dev \
     build-essential \
+    libyaml-0-2 \
     shellcheck \
     unzip \
     wget \
@@ -145,8 +156,34 @@ COPY --from=swift-builder /usr/local/bin/swiftlint /usr/local/bin/swiftlint
 COPY --from=jdk-builder /opt/java/openjdk /opt/java/openjdk
 ENV JAVA_HOME=/opt/java/openjdk
 
+# Copy Ruby 3.4 toolchain + installed gems from ruby-builder.
+# Mirrors the official ruby:3.4-slim-bookworm layout: binaries in /usr/local/bin,
+# stdlib in /usr/local/lib/ruby, headers in /usr/local/include, and gems
+# (rubocop, reek, brakeman, bundler-audit, rspec, sorbet) in /usr/local/bundle.
+COPY --from=ruby-builder /usr/local/bin/ruby /usr/local/bin/ruby
+COPY --from=ruby-builder /usr/local/bin/gem /usr/local/bin/gem
+COPY --from=ruby-builder /usr/local/bin/bundle /usr/local/bin/bundle
+COPY --from=ruby-builder /usr/local/bin/bundler /usr/local/bin/bundler
+COPY --from=ruby-builder /usr/local/bin/irb /usr/local/bin/irb
+COPY --from=ruby-builder /usr/local/bin/rake /usr/local/bin/rake
+COPY --from=ruby-builder /usr/local/bin/erb /usr/local/bin/erb
+COPY --from=ruby-builder /usr/local/bin/rdoc /usr/local/bin/rdoc
+COPY --from=ruby-builder /usr/local/bin/ri /usr/local/bin/ri
+COPY --from=ruby-builder /usr/local/bin/racc /usr/local/bin/racc
+COPY --from=ruby-builder /usr/local/lib/ruby /usr/local/lib/ruby
+COPY --from=ruby-builder /usr/local/lib/libruby.so.3.4 /usr/local/lib/libruby.so.3.4
+COPY --from=ruby-builder /usr/local/include/ruby-3.4.0 /usr/local/include/ruby-3.4.0
+COPY --from=ruby-builder /usr/local/bundle /usr/local/bundle
+RUN ln -sf libruby.so.3.4 /usr/local/lib/libruby.so.3.4.0 \
+    && ln -sf libruby.so.3.4 /usr/local/lib/libruby.so \
+    && ldconfig
+ENV GEM_HOME=/usr/local/bundle
+ENV BUNDLE_PATH=/usr/local/bundle
+ENV BUNDLE_SILENCE_ROOT_WARNING=1
+ENV BUNDLE_APP_CONFIG=/usr/local/bundle
+
 # Set up environment (consolidated PATH — all language runtimes in one line)
-ENV PATH="/opt/devrail/bin:/usr/local/cargo/bin:/usr/local/go/bin:/usr/local/swift/bin:/opt/java/openjdk/bin:${PATH}"
+ENV PATH="/opt/devrail/bin:/usr/local/bundle/bin:/usr/local/cargo/bin:/usr/local/go/bin:/usr/local/swift/bin:/opt/java/openjdk/bin:${PATH}"
 ENV DEVRAIL_LIB="/opt/devrail/lib"
 
 # Copy Go SDK from builder (required at runtime by golangci-lint, govulncheck)
@@ -168,7 +205,7 @@ RUN bash /opt/devrail/scripts/install-python.sh
 RUN bash /opt/devrail/scripts/install-bash.sh
 RUN bash /opt/devrail/scripts/install-terraform.sh
 RUN bash /opt/devrail/scripts/install-ansible.sh
-RUN bash /opt/devrail/scripts/install-ruby.sh
+# Ruby tooling is installed in the ruby-builder stage and COPY'd above
 RUN bash /opt/devrail/scripts/install-go.sh
 RUN bash /opt/devrail/scripts/install-javascript.sh
 RUN bash /opt/devrail/scripts/install-rust.sh

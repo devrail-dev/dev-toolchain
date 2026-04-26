@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Ruby support is now consumable by Rails 7+ projects out-of-the-box (#25):
+  - Image now ships **Ruby 3.4.9** (Bundler 2.6) via a dedicated `ruby-builder` stage,
+    replacing the bookworm APT Ruby 3.1.2 that could not parse Gemfiles using the
+    `windows` platform alias (`platforms: %i[mri windows]`).
+  - `_lint`, `_format`, and `_fix` Ruby branches now scope `rubocop` and `reek` to
+    a configurable `RUBY_PATHS` (default: `app lib spec config bin`) instead of
+    the workspace root, eliminating tens of thousands of warnings from `vendor/bundle/`
+    gem source. Override per-project via `RUBY_PATHS="lib spec" make check`.
+- `reek` is no longer pinned to `~> 6.3.0` — Ruby 3.4 satisfies its `dry-schema 1.14`
+  requirement.
+
+### Added
+
+- `tests/smoke-rails.sh` — CI smoke test that builds a minimal Rails-shaped fixture
+  (modern Gemfile + `vendor/bundle/` noise) and asserts `make _lint` passes cleanly
+  and does not descend into `vendor/bundle/`.
+
 ## [1.8.1] - 2026-03-19
 
 ### Changed
