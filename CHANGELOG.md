@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/smoke-rails.sh` — CI smoke test that builds a minimal Rails-shaped fixture
   (modern Gemfile + `vendor/bundle/` noise) and asserts `make _lint` passes cleanly
   and does not descend into `vendor/bundle/`.
+- `.devrail.yml` `env:` section is now passed through to the container as
+  `-e KEY=VALUE` flags on `docker run`. Lets projects declare environment
+  variables (e.g. `ANSIBLE_ROLES_PATH`, `ANSIBLE_COLLECTIONS_PATH`) that
+  tools inside the container need. Schema documented in
+  `standards/devrail-yml-schema.md`.
+- `_lint` Ansible branch now auto-detects `ANSIBLE_ROLES_PATH` from
+  `ansible.cfg` (or `ansible/ansible.cfg`) when the env var is not set
+  explicitly. Resolves a common stumble where `ansible-lint` cannot find
+  roles in projects that keep their config under an `ansible/` subdirectory.
+  Explicit configuration via `.devrail.yml` `env:` always wins.
 
 ## [1.8.1] - 2026-03-19
 
