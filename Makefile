@@ -20,6 +20,11 @@ DEVRAIL_IMAGE      ?= ghcr.io/devrail-dev/dev-toolchain
 DEVRAIL_TAG        ?= local
 DEVRAIL_FAIL_FAST  ?= 0
 DEVRAIL_LOG_FORMAT ?= json
+DEVRAIL_CONFIG     := .devrail.yml
+
+# Read project-specific env vars from .devrail.yml `env:` section and inject
+# them as `-e KEY=VALUE` into DOCKER_RUN. Empty/missing section is a no-op.
+DEVRAIL_ENV_FLAGS := $(shell yq -r '.env // {} | to_entries | .[] | "-e " + .key + "=" + .value' $(DEVRAIL_CONFIG) 2>/dev/null)
 
 # Ruby lint/format scope. Defaults to the conventional Rails directory set so
 # rubocop and reek do not descend into vendor/bundle/ (which can hold tens of
@@ -33,6 +38,7 @@ DOCKER_RUN := docker run --rm \
 	-w /workspace \
 	-e DEVRAIL_FAIL_FAST=$(DEVRAIL_FAIL_FAST) \
 	-e DEVRAIL_LOG_FORMAT=$(DEVRAIL_LOG_FORMAT) \
+	$(DEVRAIL_ENV_FLAGS) \
 	$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)
 
 .DEFAULT_GOAL := help
@@ -40,7 +46,6 @@ DOCKER_RUN := docker run --rm \
 # ---------------------------------------------------------------------------
 # .devrail.yml language detection (runs inside container where yq is available)
 # ---------------------------------------------------------------------------
-DEVRAIL_CONFIG := .devrail.yml
 LANGUAGES      := $(shell yq '.languages[]' $(DEVRAIL_CONFIG) 2>/dev/null)
 HAS_PYTHON     := $(filter python,$(LANGUAGES))
 HAS_BASH       := $(filter bash,$(LANGUAGES))
@@ -204,6 +209,23 @@ _lint: _check-config
 	fi; \
 	if [ -n "$(HAS_ANSIBLE)" ]; then \
 		ran_languages="$${ran_languages}\"ansible\","; \
+		if [ -z "$${ANSIBLE_ROLES_PATH:-}" ]; then \
+			for _acfg in ansible.cfg ansible/ansible.cfg; do \
+				if [ -f "$$_acfg" ]; then \
+					_rdir=$$(grep -E '^\s*roles_path\s*=' "$$_acfg" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' '); \
+					if [ -n "$$_rdir" ]; then \
+						_cdir=$$(dirname "$$_acfg"); \
+						if [ "$$_cdir" != "." ]; then \
+							export ANSIBLE_ROLES_PATH="$$_cdir/$$_rdir"; \
+						else \
+							export ANSIBLE_ROLES_PATH="$$_rdir"; \
+						fi; \
+						echo "{\"level\":\"info\",\"msg\":\"auto-detected ANSIBLE_ROLES_PATH=$${ANSIBLE_ROLES_PATH}\",\"language\":\"ansible\"}" >&2; \
+						break; \
+					fi; \
+				fi; \
+			done; \
+		fi; \
 		ansible-lint || { overall_exit=1; failed_languages="$${failed_languages}\"ansible\","; }; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
