@@ -21,6 +21,13 @@ DEVRAIL_TAG        ?= local
 DEVRAIL_FAIL_FAST  ?= 0
 DEVRAIL_LOG_FORMAT ?= json
 
+# Ruby lint/format scope. Defaults to the conventional Rails directory set so
+# rubocop and reek do not descend into vendor/bundle/ (which can hold tens of
+# thousands of files of installed gem source). Override per-project via:
+#   RUBY_PATHS="lib spec" make check
+# Non-existent paths are filtered out at runtime.
+RUBY_PATHS         ?= app lib spec config bin
+
 DOCKER_RUN := docker run --rm \
 	-v "$$(pwd):/workspace" \
 	-w /workspace \
@@ -207,11 +214,13 @@ _lint: _check-config
 	fi; \
 	if [ -n "$(HAS_RUBY)" ]; then \
 		ran_languages="$${ran_languages}\"ruby\","; \
-		rb_files=$$(find . -name '*.rb' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$rb_files" ]; then \
-			rubocop . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:rubocop\","; }; \
+		ruby_paths=""; \
+		for p in $(RUBY_PATHS); do [ -d "$$p" ] && ruby_paths="$$ruby_paths $$p"; done; \
+		ruby_paths=$${ruby_paths# }; \
+		if [ -n "$$ruby_paths" ]; then \
+			rubocop $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:rubocop\","; }; \
 		else \
-			echo '{"level":"info","msg":"skipping ruby rubocop lint: no .rb files found","language":"ruby"}' >&2; \
+			echo '{"level":"info","msg":"skipping ruby rubocop lint: none of RUBY_PATHS exist (override with RUBY_PATHS=...)","language":"ruby"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -219,8 +228,8 @@ _lint: _check-config
 			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
 			exit $$overall_exit; \
 		fi; \
-		if [ -n "$$rb_files" ]; then \
-			reek . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:reek\","; }; \
+		if [ -n "$$ruby_paths" ]; then \
+			reek $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:reek\","; }; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -396,11 +405,13 @@ _format: _check-config
 	fi; \
 	if [ -n "$(HAS_RUBY)" ]; then \
 		ran_languages="$${ran_languages}\"ruby\","; \
-		rb_files=$$(find . -name '*.rb' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$rb_files" ]; then \
-			rubocop --check --fail-level error . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+		ruby_paths=""; \
+		for p in $(RUBY_PATHS); do [ -d "$$p" ] && ruby_paths="$$ruby_paths $$p"; done; \
+		ruby_paths=$${ruby_paths# }; \
+		if [ -n "$$ruby_paths" ]; then \
+			rubocop --check --fail-level error $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 		else \
-			echo '{"level":"info","msg":"skipping ruby format: no .rb files found","language":"ruby"}' >&2; \
+			echo '{"level":"info","msg":"skipping ruby format: none of RUBY_PATHS exist (override with RUBY_PATHS=...)","language":"ruby"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -544,11 +555,13 @@ _fix: _check-config
 	fi; \
 	if [ -n "$(HAS_RUBY)" ]; then \
 		ran_languages="$${ran_languages}\"ruby\","; \
-		rb_files=$$(find . -name '*.rb' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$rb_files" ]; then \
-			rubocop -a . || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+		ruby_paths=""; \
+		for p in $(RUBY_PATHS); do [ -d "$$p" ] && ruby_paths="$$ruby_paths $$p"; done; \
+		ruby_paths=$${ruby_paths# }; \
+		if [ -n "$$ruby_paths" ]; then \
+			rubocop -a $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 		else \
-			echo '{"level":"info","msg":"skipping ruby fix: no .rb files found","language":"ruby"}' >&2; \
+			echo '{"level":"info","msg":"skipping ruby fix: none of RUBY_PATHS exist (override with RUBY_PATHS=...)","language":"ruby"}' >&2; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -1215,7 +1228,7 @@ _init: _check-config
 	if [ -n "$(HAS_RUBY)" ]; then \
 	  scaffold .rubocop.yml \
 	    'AllCops:' \
-	    '  TargetRubyVersion: 3.1' \
+	    '  TargetRubyVersion: 3.4' \
 	    '  NewCops: enable' \
 	    '  Exclude:' \
 	    '    - "db/schema.rb"' \

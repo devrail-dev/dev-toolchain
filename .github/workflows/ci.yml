@@ -42,6 +42,16 @@ jobs:
             bash /opt/devrail/scripts/report-tool-versions.sh \
             | jq .
 
+      # Phase 2c: Rails 7+ consumer smoke test (issue #25)
+      # Verifies the image is consumable by modern Rails projects:
+      #   - Gemfile with `platforms: %i[mri windows]` parses (needs Bundler 2.6+).
+      #   - make _lint scopes to RUBY_PATHS — vendor/bundle/ is not scanned.
+      - name: Rails 7+ smoke test
+        run: bash tests/smoke-rails.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 3: Security scans
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.

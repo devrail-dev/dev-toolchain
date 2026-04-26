@@ -55,7 +55,6 @@ require_cmd "gem" "gem is required but not found"
 
 # Install Ruby tools via gem (idempotent)
 # Each entry is "gem_name" or "gem_name:version_constraint"
-# reek is pinned to ~> 6.3.0 because 6.5+ requires Ruby 3.4 (dry-schema 1.14)
 readonly RUBY_TOOLS=(
   "rubocop"
   "rubocop-rails"
@@ -64,7 +63,7 @@ readonly RUBY_TOOLS=(
   "brakeman"
   "bundler-audit"
   "rspec"
-  "reek:~> 6.3.0"
+  "reek"
   "sorbet"
   "sorbet-runtime"
 )
