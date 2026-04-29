@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `bundle install` now succeeds out-of-the-box for Rails 7+ projects that use
+  the standard `debug` gem (#28). v1.9.0 shipped `libyaml-0-2` (runtime lib only)
+  but not the development headers required to compile `psych` 5.x as a native
+  gem; the resolution chain `debug → irb → rdoc → psych` failed at the psych
+  build step. Replaced `libyaml-0-2` with `libyaml-dev` (which transitively
+  pulls in the runtime lib).
+- `tests/smoke-rails.sh` extended with a `bundle install` step against the
+  Rails-shaped fixture's Gemfile — exercises the psych native-compile path
+  end-to-end and asserts `require 'psych'` succeeds inside the container.
+
 ## [1.9.0] - 2026-04-27
 
 ### Fixed

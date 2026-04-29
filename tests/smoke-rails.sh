@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# tests/smoke-rails.sh — Rails 7+ smoke test for issue #25
+# tests/smoke-rails.sh — Rails 7+ smoke test for issues #25 and #28
 #
 # Verifies the image is consumable by Rails 7+ projects out-of-the-box:
 #   1. Gemfile with `platforms: %i[mri windows]` parses (needs Bundler 2.6+).
 #   2. make _lint scopes to RUBY_PATHS — vendor/bundle/ is NOT scanned.
+#   3. `bundle install` succeeds against a Gemfile containing `gem 'debug'`
+#      — exercises the psych->libyaml native compile path (issue #28).
 #
 # Usage: bash tests/smoke-rails.sh
 # Env:
@@ -15,7 +17,17 @@ set -euo pipefail
 IMAGE="${DEVRAIL_IMAGE:-ghcr.io/devrail-dev/dev-toolchain}:${DEVRAIL_TAG:-local}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FIXTURE="$(mktemp -d)"
-trap 'rm -rf "$FIXTURE"' EXIT
+
+# bundle install creates root-owned files inside the bind mount. Host-side `rm`
+# can't delete them; do the cleanup inside a container instead.
+cleanup() {
+  if [ -n "${FIXTURE:-}" ] && [ -d "$FIXTURE" ]; then
+    docker run --rm -v "$FIXTURE:/cleanup" "$IMAGE" \
+      sh -c 'rm -rf /cleanup/* /cleanup/.[!.]* 2>/dev/null || true' >/dev/null 2>&1 || true
+    rmdir "$FIXTURE" 2>/dev/null || rm -rf "$FIXTURE" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
 
 # --- Build a minimal Rails-shaped fixture ----------------------------------
 mkdir -p "$FIXTURE"/{app,lib,vendor/bundle/ruby/3.4.0/gems/noisy/lib}
@@ -107,4 +119,39 @@ if [ "$elapsed" -gt 60 ]; then
   exit 1
 fi
 
-echo "==> All Rails smoke checks passed (lint completed in ${elapsed}s)"
+echo "==> Rails lint scoping: PASS (completed in ${elapsed}s)"
+
+# --- 3) bundle install must succeed against the Rails-shaped Gemfile -------
+# Issue #28: psych 5.x native build needs libyaml-dev headers in the runtime.
+# Without them, `debug -> irb -> rdoc -> psych` resolution fails when bundler
+# tries to compile psych. This step does a real network install — needs
+# rubygems.org reachable from the runner.
+echo "==> Running bundle install (needs libyaml-dev for psych native compile)"
+bundle_start=$(date +%s)
+bundle_output=$(docker run --rm \
+  -v "$FIXTURE:/workspace" \
+  -w /workspace \
+  -e BUNDLE_PATH=/workspace/vendor/bundle \
+  "$IMAGE" \
+  bundle install --jobs 4 --quiet 2>&1) && bundle_exit=0 || bundle_exit=$?
+bundle_elapsed=$(($(date +%s) - bundle_start))
+
+if [ "$bundle_exit" -ne 0 ]; then
+  printf '%s\n' "$bundle_output"
+  echo "FAIL: bundle install exited $bundle_exit — likely missing libyaml-dev or network issue" >&2
+  exit 1
+fi
+
+if ! docker run --rm \
+  -v "$FIXTURE:/workspace" \
+  -w /workspace \
+  -e BUNDLE_PATH=/workspace/vendor/bundle \
+  "$IMAGE" \
+  bundle exec ruby -e "require 'psych'; puts 'psych ' + Psych::VERSION + ' loads OK'" >/dev/null 2>&1; then
+  echo "FAIL: psych installed but cannot be required — libyaml runtime/header mismatch" >&2
+  exit 1
+fi
+
+echo "==> bundle install + psych load: PASS (completed in ${bundle_elapsed}s)"
+
+echo "==> All Rails smoke checks passed"
