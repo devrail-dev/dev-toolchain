@@ -31,6 +31,7 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | **CI workflow templates** | Stable | GitHub Actions workflows and GitLab CI pipeline shipped in template repos. |
 | **Pre-commit hooks** | Stable | Conventional commit hook and per-language hooks configured in template repos. |
 | **Documentation site** | Stable | [devrail.dev](https://devrail.dev) is live with full standards coverage. |
+| **Plugin loader prelude** | Preview (v1.10.0+) | Validates `plugin.devrail.yml` manifests declared in `.devrail.yml` `plugins:` and runs as a prerequisite of every language target. No-op when `plugins:` is absent — v1.9.x behaviour unchanged. Resolver and execution loop ship in subsequent stories. |
 
 ## Consumer responsibilities
 

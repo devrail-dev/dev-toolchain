@@ -1,0 +1,17 @@
+schema_version: 1
+name: elixir
+version: 1.0.0
+description: "Elixir language support — Story 13.2 happy-path fixture"
+devrail_min_version: 1.10.0
+
+targets:
+  lint:
+    cmd: "mix credo --strict {paths}"
+  format_check:
+    cmd: "mix format --check-formatted"
+  test:
+    cmd: "mix test"
+
+gates:
+  lint: ["mix.exs"]
+  test: ["mix.exs", "test/"]

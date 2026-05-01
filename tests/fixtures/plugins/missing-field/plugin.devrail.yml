@@ -1,0 +1,5 @@
+schema_version: 1
+name: incomplete
+version: 1.0.0
+devrail_min_version: 1.10.0
+# `targets:` intentionally omitted to exercise the missing-required-field path.

@@ -83,10 +83,15 @@ FROM node:22-bookworm-slim AS node-base
 FROM debian:bookworm-slim AS runtime
 
 ARG TARGETARCH
+# Image semver, written into /opt/devrail/VERSION so the plugin loader can
+# enforce `devrail_min_version` (Story 13.2). Defaults to 0.0.0-dev for local
+# builds; CI/release passes `--build-arg DEVRAIL_VERSION=$(git describe ...)`.
+ARG DEVRAIL_VERSION=0.0.0-dev
 
 LABEL org.opencontainers.image.source="https://github.com/devrail-dev/dev-toolchain"
 LABEL org.opencontainers.image.description="DevRail developer toolchain container"
 LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.version="${DEVRAIL_VERSION}"
 
 # Base system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -132,6 +137,11 @@ COPY scripts/ /opt/devrail/scripts/
 
 # Copy default configuration files
 COPY config/ /opt/devrail/config/
+
+# Record image version for the plugin loader (Story 13.2). Read by
+# lib/version.sh:get_devrail_version. Local builds default to 0.0.0-dev,
+# which version_gte treats as "unknown" and lets pass.
+RUN printf '%s' "${DEVRAIL_VERSION}" >/opt/devrail/VERSION
 
 # Copy Node.js runtime from node-base (required for ESLint, Prettier, tsc, vitest)
 COPY --from=node-base /usr/local/bin/node /usr/local/bin/node

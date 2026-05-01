@@ -52,6 +52,16 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Phase 2d: Plugin loader smoke test (Story 13.2)
+      # Verifies the v1 plugin manifest validator + loader prelude:
+      #   - validator unit cases (valid + 4 negative fixtures)
+      #   - integration: no plugins / valid plugin / invalid plugin
+      - name: Plugin loader smoke test
+        run: bash tests/test-plugin-loader.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 3: Security scans
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.
