@@ -33,18 +33,18 @@ DEVRAIL_ENV_FLAGS := $(shell yq -r '.env // {} | to_entries | .[] | "-e " + .key
 # Non-existent paths are filtered out at runtime.
 RUBY_PATHS         ?= app lib spec config bin
 
-DOCKER_RUN := docker run --rm \
-	-v "$$(pwd):/workspace" \
-	-w /workspace \
-	-e DEVRAIL_FAIL_FAST=$(DEVRAIL_FAIL_FAST) \
-	-e DEVRAIL_LOG_FORMAT=$(DEVRAIL_LOG_FORMAT) \
-	$(DEVRAIL_ENV_FLAGS) \
-	$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)
-
-.DEFAULT_GOAL := help
+# Prefer `bundle exec <tool>` ONLY when the project pins that specific tool
+# in its Gemfile.lock. Otherwise fall back to the container's bundled tool.
+# This gives projects with project-pinned versions consistency with CI without
+# breaking projects that just declare `languages: [ruby]` and rely on the
+# container's defaults. Issue #30 Gap C.
+# Usage in recipes: $(call RUBY_EXEC_FOR,rubocop)rubocop $$ruby_paths
+RUBY_EXEC_FOR = $(if $(and $(wildcard Gemfile.lock),$(shell grep -m1 -E "^[[:space:]]+$(1)[[:space:]]" Gemfile.lock 2>/dev/null)),bundle exec ,)
 
 # ---------------------------------------------------------------------------
 # .devrail.yml language detection (runs inside container where yq is available)
+# Computed before DOCKER_RUN so HAS_<LANG> can influence container env (e.g.
+# BUNDLE_APP_CONFIG override for Ruby projects — issue #30).
 # ---------------------------------------------------------------------------
 LANGUAGES      := $(shell yq '.languages[]' $(DEVRAIL_CONFIG) 2>/dev/null)
 HAS_PYTHON     := $(filter python,$(LANGUAGES))
@@ -57,6 +57,23 @@ HAS_JAVASCRIPT := $(filter javascript,$(LANGUAGES))
 HAS_RUST       := $(filter rust,$(LANGUAGES))
 HAS_SWIFT      := $(filter swift,$(LANGUAGES))
 HAS_KOTLIN     := $(filter kotlin,$(LANGUAGES))
+
+# When HAS_RUBY, override the container's default BUNDLE_APP_CONFIG so the
+# project's `.bundle/config` (e.g. `BUNDLE_PATH: vendor/bundle`) wins. Without
+# this, the container's own `/usr/local/bundle` config silently overrides the
+# project's, and bundler can't find project-installed gems (issue #30 Gap A).
+RUBY_DOCKER_ENV := $(if $(HAS_RUBY),-e BUNDLE_APP_CONFIG=/workspace/.bundle,)
+
+DOCKER_RUN := docker run --rm \
+	-v "$$(pwd):/workspace" \
+	-w /workspace \
+	-e DEVRAIL_FAIL_FAST=$(DEVRAIL_FAIL_FAST) \
+	-e DEVRAIL_LOG_FORMAT=$(DEVRAIL_LOG_FORMAT) \
+	$(DEVRAIL_ENV_FLAGS) \
+	$(RUBY_DOCKER_ENV) \
+	$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)
+
+.DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------------------
 # .PHONY declarations
@@ -240,7 +257,7 @@ _lint: _check-config
 		for p in $(RUBY_PATHS); do [ -d "$$p" ] && ruby_paths="$$ruby_paths $$p"; done; \
 		ruby_paths=$${ruby_paths# }; \
 		if [ -n "$$ruby_paths" ]; then \
-			rubocop $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:rubocop\","; }; \
+			$(call RUBY_EXEC_FOR,rubocop)rubocop $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:rubocop\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping ruby rubocop lint: none of RUBY_PATHS exist (override with RUBY_PATHS=...)","language":"ruby"}' >&2; \
 		fi; \
@@ -251,7 +268,7 @@ _lint: _check-config
 			exit $$overall_exit; \
 		fi; \
 		if [ -n "$$ruby_paths" ]; then \
-			reek $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:reek\","; }; \
+			$(call RUBY_EXEC_FOR,reek)reek $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:reek\","; }; \
 		fi; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
@@ -431,7 +448,7 @@ _format: _check-config
 		for p in $(RUBY_PATHS); do [ -d "$$p" ] && ruby_paths="$$ruby_paths $$p"; done; \
 		ruby_paths=$${ruby_paths# }; \
 		if [ -n "$$ruby_paths" ]; then \
-			rubocop --check --fail-level error $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+			$(call RUBY_EXEC_FOR,rubocop)rubocop --check --fail-level error $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping ruby format: none of RUBY_PATHS exist (override with RUBY_PATHS=...)","language":"ruby"}' >&2; \
 		fi; \
@@ -581,7 +598,7 @@ _fix: _check-config
 		for p in $(RUBY_PATHS); do [ -d "$$p" ] && ruby_paths="$$ruby_paths $$p"; done; \
 		ruby_paths=$${ruby_paths# }; \
 		if [ -n "$$ruby_paths" ]; then \
-			rubocop -a $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+			$(call RUBY_EXEC_FOR,rubocop)rubocop -a $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping ruby fix: none of RUBY_PATHS exist (override with RUBY_PATHS=...)","language":"ruby"}' >&2; \
 		fi; \
@@ -746,7 +763,18 @@ _test: _check-config
 	if [ -n "$(HAS_RUBY)" ]; then \
 		if [ -d "spec" ]; then \
 			ran_languages="$${ran_languages}\"ruby\","; \
-			rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+			if [ -f "config/application.rb" ] && [ -f "Gemfile" ]; then \
+				echo '{"level":"info","msg":"detected Rails app — running db:test:prepare before rspec","language":"ruby"}' >&2; \
+				if ! bundle exec rails db:test:prepare 2>/tmp/_devrail_rails_db_err; then \
+					cat /tmp/_devrail_rails_db_err >&2; \
+					echo '{"level":"error","msg":"db:test:prepare failed — ensure your test database is reachable (e.g. start postgres before make test)","language":"ruby"}' >&2; \
+					overall_exit=1; failed_languages="$${failed_languages}\"ruby:db-prepare\","; \
+				else \
+					$(call RUBY_EXEC_FOR,rspec)rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+				fi; \
+			else \
+				$(call RUBY_EXEC_FOR,rspec)rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+			fi; \
 		else \
 			skipped_languages="$${skipped_languages}\"ruby\","; \
 			echo '{"level":"info","msg":"skipping ruby tests: no spec/ directory found","language":"ruby"}' >&2; \
@@ -898,7 +926,7 @@ _security: _check-config
 	if [ -n "$(HAS_RUBY)" ]; then \
 		ran_languages="$${ran_languages}\"ruby\","; \
 		if [ -f "config/application.rb" ]; then \
-			brakeman -q || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:brakeman\","; }; \
+			$(call RUBY_EXEC_FOR,brakeman)brakeman -q || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:brakeman\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping brakeman: not a Rails application","language":"ruby"}' >&2; \
 		fi; \
@@ -909,7 +937,7 @@ _security: _check-config
 			exit $$overall_exit; \
 		fi; \
 		if [ -f "Gemfile.lock" ]; then \
-			bundler-audit check || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:bundler-audit\","; }; \
+			$(call RUBY_EXEC_FOR,bundler-audit)bundler-audit check || { overall_exit=1; failed_languages="$${failed_languages}\"ruby:bundler-audit\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping bundler-audit: no Gemfile.lock found","language":"ruby"}' >&2; \
 		fi; \

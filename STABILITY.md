@@ -32,6 +32,13 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | **Pre-commit hooks** | Stable | Conventional commit hook and per-language hooks configured in template repos. |
 | **Documentation site** | Stable | [devrail.dev](https://devrail.dev) is live with full standards coverage. |
 
+## Consumer responsibilities
+
+These are services/data the dev-toolchain container does **not** provide; consumers must provide them when relevant:
+
+- **Database service** (Postgres, MySQL, etc.) — required for Rails projects whose specs touch the test database. The container runs `bundle exec rails db:test:prepare` before `rspec` (when `config/application.rb` + `Gemfile` are present), which needs a reachable database. Typical local pattern: `docker-compose up -d postgres` before `make test`. Typical CI pattern: a `services:` block.
+- **Project bundle install** — the container ships its own gems for `rubocop`/`reek`/etc. as defaults, but for Gemfile-pinned versions it expects the project's bundle to already be installed (`bundle install`) so `bundle exec <tool>` can find them.
+
 ## Versioning
 
 All DevRail repos follow [Semantic Versioning](https://semver.org/). The container image uses a floating major tag (`:v1`) that always points to the latest `v1.x.x` release. Pin to a specific tag (e.g., `:v1.4.0`) if you need exact reproducibility.
