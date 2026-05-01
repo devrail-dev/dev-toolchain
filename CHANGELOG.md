@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Rails projects can now run a CI-equivalent `make check` against their actual
+  Gemfile-pinned tools, test database, and `.bundle/config` (#30):
+  - **Gap A — `BUNDLE_APP_CONFIG` override.** `DOCKER_RUN` now passes
+    `-e BUNDLE_APP_CONFIG=/workspace/.bundle` when `HAS_RUBY` is detected, so
+    the project's `.bundle/config` (e.g. `BUNDLE_PATH: vendor/bundle`) wins
+    over the container's `/usr/local/bundle` default. Previously, projects
+    with a sandboxed bundle silently lost their config and bundler couldn't
+    find their gems.
+  - **Gap B — `_test` runs `bundle exec rails db:test:prepare` before rspec.**
+    Detected by `config/application.rb` + `Gemfile` presence. On DB-unreachable
+    failures the loader emits a structured `error` event with a clear hint
+    ("ensure your test database is reachable, e.g. start postgres before
+    make test") rather than letting 200+ specs fail with cryptic errors.
+    Non-Rails Ruby projects continue to call `rspec` directly.
+  - **Gap C — `bundle exec` wrapping for project-pinned tools.** `_lint`,
+    `_format`, `_fix`, `_test`, `_security` now use `bundle exec <tool>`
+    when the tool is present in the project's `Gemfile.lock`. Falls back to
+    the container's tool when the project does not pin it. Eliminates lint
+    diffs caused by version drift between the container's rubocop/reek/
+    brakeman/bundler-audit/rspec and the project's pinned versions.
+- `STABILITY.md` documents the new "you provide a reachable Postgres for
+  Rails projects with DB-touching specs" expectation.
+
+### Added
+
+- `tests/smoke-rails.sh` — fourth assertion: with a project-local
+  `.bundle/config` declaring `BUNDLE_PATH: vendor/bundle`, the container
+  honours it (validates Gap A's fix end-to-end).
+
 ## [1.9.1] - 2026-04-29
 
 ### Fixed

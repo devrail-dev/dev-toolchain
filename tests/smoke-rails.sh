@@ -154,4 +154,29 @@ fi
 
 echo "==> bundle install + psych load: PASS (completed in ${bundle_elapsed}s)"
 
+# --- 4) Project .bundle/config wins when DOCKER_RUN sets the override ------
+# Issue #30 Gap A: container's default BUNDLE_APP_CONFIG=/usr/local/bundle
+# silently overrides project-local .bundle/config. The Makefile's DOCKER_RUN
+# now passes -e BUNDLE_APP_CONFIG=/workspace/.bundle for Ruby projects so the
+# project's own config wins.
+echo "==> Verifying .bundle/config override (issue #30 Gap A)"
+mkdir -p "$FIXTURE/.bundle"
+cat >"$FIXTURE/.bundle/config" <<'BUNDLE_CFG'
+---
+BUNDLE_PATH: "vendor/bundle"
+BUNDLE_CFG
+
+bundle_path_seen=$(docker run --rm \
+  -v "$FIXTURE:/workspace" \
+  -w /workspace \
+  -e BUNDLE_APP_CONFIG=/workspace/.bundle \
+  "$IMAGE" \
+  bundle config get path 2>/dev/null | grep -oE '"[^"]+"' | head -1 | tr -d '"' || echo "")
+
+if [ "$bundle_path_seen" != "vendor/bundle" ]; then
+  echo "FAIL: project .bundle/config ignored — bundle path resolved to '$bundle_path_seen', expected 'vendor/bundle'" >&2
+  exit 1
+fi
+echo "==> .bundle/config override: PASS (BUNDLE_PATH = $bundle_path_seen)"
+
 echo "==> All Rails smoke checks passed"
