@@ -176,8 +176,54 @@ _check-config:
 		exit 2; \
 	fi
 
+# --- _plugins-load: validate every plugin manifest declared in .devrail.yml ---
+# Story 13.2: runs as a prerequisite of every language-touching target. Exits 2
+# (misconfig) if any manifest is invalid, so no tool runs against a broken
+# plugin set. The fetcher (Story 13.3) populates manifest files at the
+# resolved location; tests override DEVRAIL_PLUGINS_DIR to point at fixtures.
+.PHONY: _plugins-load
+_plugins-load: _check-config
+	@plugins_dir="$${DEVRAIL_PLUGINS_DIR:-/opt/devrail/plugins}"; \
+	cache_file="$${DEVRAIL_PLUGINS_CACHE:-/tmp/devrail-plugins-loaded.yaml}"; \
+	plugin_count=$$(yq -r '.plugins // [] | length' $(DEVRAIL_CONFIG) 2>/dev/null || echo 0); \
+	if [ "$$plugin_count" = "0" ]; then \
+		echo '{"level":"info","msg":"no plugins declared","language":"_plugins","script":"_plugins-load"}' >&2; \
+		printf 'plugins: []\n' >"$$cache_file"; \
+		exit 0; \
+	fi; \
+	echo "{\"level\":\"info\",\"msg\":\"plugin loader started\",\"plugin_count\":$$plugin_count,\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
+	loaded=0; failed=0; loaded_names=""; \
+	printf 'plugins:\n' >"$$cache_file"; \
+	for i in $$(seq 0 $$((plugin_count - 1))); do \
+		source_url=$$(yq -r ".plugins[$$i].source // \"\"" $(DEVRAIL_CONFIG)); \
+		if [ -z "$$source_url" ]; then \
+			echo "{\"level\":\"error\",\"msg\":\"plugin entry missing source field\",\"index\":$$i,\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
+			failed=$$((failed + 1)); \
+			continue; \
+		fi; \
+		slug=$$(basename "$$source_url"); \
+		manifest="$$plugins_dir/$$slug/plugin.devrail.yml"; \
+		if [ ! -r "$$manifest" ]; then \
+			echo "{\"level\":\"error\",\"msg\":\"plugin manifest not found\",\"plugin\":\"$$slug\",\"path\":\"$$manifest\",\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
+			failed=$$((failed + 1)); \
+			continue; \
+		fi; \
+		if bash /opt/devrail/scripts/plugin-validator.sh "$$manifest"; then \
+			loaded=$$((loaded + 1)); \
+			plugin_name=$$(yq -r '.name' "$$manifest"); \
+			plugin_version=$$(yq -r '.version' "$$manifest"); \
+			loaded_names="$${loaded_names}\"$$plugin_name\","; \
+			printf '  - name: %s\n    version: %s\n    source: %s\n    manifest: %s\n' \
+				"$$plugin_name" "$$plugin_version" "$$source_url" "$$manifest" >>"$$cache_file"; \
+		else \
+			failed=$$((failed + 1)); \
+		fi; \
+	done; \
+	echo "{\"level\":\"info\",\"msg\":\"plugin loader complete\",\"loaded\":$$loaded,\"failed\":$$failed,\"plugins\":[$${loaded_names%,}],\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
+	if [ "$$failed" -gt 0 ]; then exit 2; fi
+
 # --- _lint: language-specific linting ---
-_lint: _check-config
+_lint: _plugins-load
 	@start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
@@ -394,7 +440,7 @@ _lint: _check-config
 	exit $$overall_exit
 
 # --- _format: language-specific format checking ---
-_format: _check-config
+_format: _plugins-load
 	@start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
@@ -544,7 +590,7 @@ _format: _check-config
 	exit $$overall_exit
 
 # --- _fix: language-specific format fixing (in-place) ---
-_fix: _check-config
+_fix: _plugins-load
 	@start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
@@ -694,7 +740,7 @@ _fix: _check-config
 	exit $$overall_exit
 
 # --- _test: language-specific test runners ---
-_test: _check-config
+_test: _plugins-load
 	@start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
@@ -875,7 +921,7 @@ _test: _check-config
 	exit $$overall_exit
 
 # --- _security: language-specific security scanners ---
-_security: _check-config
+_security: _plugins-load
 	@start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
@@ -1399,7 +1445,7 @@ _init: _check-config
 	echo "{\"target\":\"init\",\"created\":[$${created%,}],\"skipped\":[$${skipped%,}]}"
 
 # --- _check: orchestrate all targets ---
-_check: _check-config
+_check: _plugins-load
 	@overall_exit=0; \
 	overall_start=$$(date +%s%3N); \
 	results=""; \

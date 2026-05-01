@@ -1,0 +1,7 @@
+schema_version: 1
+name: future-plugin
+version: 1.0.0
+devrail_min_version: 99.0.0
+targets:
+  lint:
+    cmd: "true"

@@ -34,6 +34,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Plugin manifest parser and loader prelude (Story 13.2, Epic 13 / v1.10.0).
+  - New `scripts/plugin-validator.sh` — validates a `plugin.devrail.yml`
+    against schema_version=1 and emits structured `error`-level events for
+    every violation cumulatively (does not fail-fast on the first violation).
+  - New `lib/version.sh` — `version_gte` semver helper plus
+    `get_devrail_version` (reads `DEVRAIL_VERSION` env, then
+    `/opt/devrail/VERSION`, else `0.0.0-dev`).
+  - New `_plugins-load` Makefile target — runs as a prerequisite of `_check`,
+    `_lint`, `_format`, `_fix`, `_test`, `_security`. Iterates `.devrail.yml`
+    `plugins:` entries, locates each manifest under
+    `${DEVRAIL_PLUGINS_DIR:-/opt/devrail/plugins}/<slug>/plugin.devrail.yml`,
+    validates each, writes a parsed cache to
+    `${DEVRAIL_PLUGINS_CACHE:-/tmp/devrail-plugins-loaded.yaml}`, and exits 2
+    (misconfig) on any violation before any tool runs.
+  - Dockerfile records image version at build time via `ARG DEVRAIL_VERSION`
+    (default `0.0.0-dev`) → `/opt/devrail/VERSION` and the
+    `org.opencontainers.image.version` label.
+  - Behaviour without a `plugins:` section is unchanged — the loader emits a
+    single info event and exits 0.
+- `tests/test-plugin-loader.sh` — five validator unit cases against checked-in
+  fixtures plus three loader integration cases (no plugins / valid plugin /
+  invalid plugin). Wired into `.github/workflows/ci.yml`.
 - `tests/smoke-rails.sh` — fourth assertion: with a project-local
   `.bundle/config` declaring `BUNDLE_PATH: vendor/bundle`, the container
   honours it (validates Gap A's fix end-to-end).
