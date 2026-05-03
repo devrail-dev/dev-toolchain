@@ -3,17 +3,17 @@
 #
 # Purpose: For each plugin declared in `.devrail.yml`, resolve the `rev:`
 #          (tag or SHA) to an immutable SHA via `git ls-remote`, fetch the
-#          plugin repo to a content-addressed cache directory, compute a
-#          deterministic content_hash of the tree, and write a sorted YAML
-#          lockfile atomically.
+#          plugin repo to a content-addressed cache directory, validate the
+#          fetched manifest, compute a deterministic content_hash of the
+#          tree, and write a sorted YAML lockfile atomically.
 #
 # Usage:   bash scripts/plugin-resolver.sh [<devrail-yml-path>] [--help]
 #          Default config path: .devrail.yml in CWD.
 #          Exit 0 — lockfile written (or no-op if no plugins declared)
-#          Exit 2 — resolution / fetch / configuration failure
+#          Exit 2 — resolution / fetch / configuration / validation failure
 #
-# Dependencies: yq v4+, git 2+, sha256sum, find, sort, lib/log.sh,
-#               lib/version.sh
+# Dependencies: yq v4+, git 2+, sha256sum, find, sort, plugin-validator.sh,
+#               lib/log.sh, lib/version.sh, lib/plugin-cache.sh
 
 set -euo pipefail
 LC_ALL=C
@@ -27,6 +27,8 @@ DEVRAIL_LIB="${DEVRAIL_LIB:-${SCRIPT_DIR}/../lib}"
 source "${DEVRAIL_LIB}/log.sh"
 # shellcheck source=../lib/version.sh
 source "${DEVRAIL_LIB}/version.sh"
+# shellcheck source=../lib/plugin-cache.sh
+source "${DEVRAIL_LIB}/plugin-cache.sh"
 
 # --- Help ---
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -58,6 +60,19 @@ require_cmd "sha256sum" "sha256sum is required (coreutils)"
 
 # Always remove the temp lockfile on exit (atomic-write contract).
 trap 'rm -f "${LOCKFILE_TMP}"' EXIT
+
+# parse_plugin_count reads `.plugins | length`, distinguishing "no plugins
+# declared" (count=0, exit 0) from "yq parse error" (exit 1). Without this,
+# malformed YAML was silently treated as "no plugins" — review finding H1.
+parse_plugin_count() {
+  local count
+  if ! count="$(yq -r '.plugins // [] | length' "${DEVRAIL_YML}" 2>&1)"; then
+    log_event error "config could not be parsed by yq" \
+      path="${DEVRAIL_YML}" reason="${count}" language=_plugins
+    return 1
+  fi
+  printf "%s" "${count}"
+}
 
 # resolve_ref <source-url> <rev>
 # Echoes the resolved SHA on stdout.
@@ -108,9 +123,12 @@ resolve_ref() {
   printf "%s" "${sha}"
 }
 
-# fetch_to_cache <source-url> <slug> <rev>
+# fetch_to_cache <source-url> <slug> <rev> <sha>
 # Clones the source at <sha> into ${PLUGINS_DIR}/<slug>/<rev>/ if not already
-# present. Idempotent — if the cached tree exists, no fetch occurs.
+# present. Idempotent — if the cached tree exists and the recorded SHA matches,
+# no fetch occurs. Atomic: fetches into a sibling dir and moves the OLD target
+# aside before installing the new one, so a concurrent reader either sees the
+# old or the new tree but never an empty/half-populated path (review fix M3).
 fetch_to_cache() {
   local source_url="$1"
   local slug="$2"
@@ -129,7 +147,7 @@ fetch_to_cache() {
 
   log_event info "fetching plugin" source="${source_url}" rev="${rev}" sha="${sha}" language=_plugins
 
-  mkdir -p "${target}"
+  mkdir -p "$(dirname "${target}")"
   local fetch_dir
   fetch_dir="$(mktemp -d "${target}.fetch.XXXXXX")"
   if ! (cd "${fetch_dir}" && git init --quiet &&
@@ -140,36 +158,42 @@ fetch_to_cache() {
     rm -rf "${fetch_dir}"
     return 1
   fi
+  printf "%s\n" "${sha}" >"${fetch_dir}/.devrail.sha"
 
-  # Move the fetched tree contents into target/, atomically replacing any
-  # stale cached copy of the same slug/rev.
-  rm -rf "${target}"
-  mv "${fetch_dir}" "${target}"
-  printf "%s\n" "${sha}" >"${target}/.devrail.sha"
-}
-
-# compute_content_hash <dir>
-# Deterministic hash of all non-.git/ files in the directory.
-# Stable across machines (LC_ALL=C, find+sort+sha256sum chain).
-compute_content_hash() {
-  local dir="$1"
-  if [[ ! -d "${dir}" ]]; then
-    log_event error "content_hash directory missing" path="${dir}" language=_plugins
+  # Atomic swap: move existing target to .old, install new, then remove .old.
+  # A concurrent reader either sees the old target or the new one; never an
+  # absent or partially-populated path.
+  local old="${target}.old.$$"
+  if [[ -d "${target}" ]]; then
+    mv "${target}" "${old}"
+  fi
+  if ! mv "${fetch_dir}" "${target}"; then
+    if [[ -d "${old}" ]]; then
+      mv "${old}" "${target}"
+    fi
+    log_event error "atomic cache swap failed" source="${source_url}" sha="${sha}" language=_plugins
+    rm -rf "${fetch_dir}"
     return 1
   fi
-  (cd "${dir}" && find . -type f \
-    -not -path './.git/*' \
-    -not -name '.devrail.sha' \
-    -print0 |
-    sort -z |
-    xargs -0 sha256sum |
-    sha256sum |
-    cut -d' ' -f1)
+  if [[ -d "${old}" ]]; then
+    rm -rf "${old}"
+  fi
+}
+
+# yaml_quote <string> — render a value as a double-quoted YAML scalar
+# (review fix L3). Escapes backslashes and double-quotes.
+yaml_quote() {
+  local v="$1"
+  v="${v//\\/\\\\}"
+  v="${v//\"/\\\"}"
+  printf '"%s"' "${v}"
 }
 
 # --- Main ---
 
-plugin_count="$(yq -r '.plugins // [] | length' "${DEVRAIL_YML}" 2>/dev/null || echo 0)"
+if ! plugin_count="$(parse_plugin_count)"; then
+  exit 2
+fi
 if [[ "${plugin_count}" == "0" ]]; then
   log_event info "no plugins declared; lockfile not generated" language=_plugins
   exit 0
@@ -181,6 +205,7 @@ log_event info "resolving plugins" plugin_count:="${plugin_count}" language=_plu
 # associative-array-keyed-by-source map, then sort the keys before writing.
 declare -a SOURCES_ORDER=()
 declare -A ENTRY_BY_SOURCE=()
+declare -A SLUG_TO_SOURCE=()
 
 failed=0
 for i in $(seq 0 $((plugin_count - 1))); do
@@ -194,7 +219,28 @@ for i in $(seq 0 $((plugin_count - 1))); do
     continue
   fi
 
-  slug="$(basename "${source_url}")"
+  if ! slug="$(derive_slug "${source_url}")"; then
+    log_event error "plugin source URL produced an invalid slug" \
+      source="${source_url}" rev="${rev}" \
+      reason="basename(source) must be alphanumeric+./_- after stripping .git" \
+      language=_plugins
+    failed=$((failed + 1))
+    continue
+  fi
+
+  # Slug-collision check: detect upfront so consumers fail fast on a config
+  # error rather than silently overwriting one plugin's cache (review fix M2).
+  if [[ -n "${SLUG_TO_SOURCE[${slug}]:-}" && "${SLUG_TO_SOURCE[${slug}]}" != "${source_url}" ]]; then
+    log_event error "plugin slug collision" \
+      slug="${slug}" \
+      source_a="${SLUG_TO_SOURCE[${slug}]}" \
+      source_b="${source_url}" \
+      reason="two distinct sources resolve to the same cache directory; rename one" \
+      language=_plugins
+    failed=$((failed + 1))
+    continue
+  fi
+  SLUG_TO_SOURCE["${slug}"]="${source_url}"
 
   if ! sha="$(resolve_ref "${source_url}" "${rev}")"; then
     failed=$((failed + 1))
@@ -214,6 +260,17 @@ for i in $(seq 0 $((plugin_count - 1))); do
     continue
   fi
 
+  # Validate the manifest now so authors find structural issues at update
+  # time, not at every subsequent `make check` (review fix M5).
+  if ! bash "${SCRIPT_DIR}/plugin-validator.sh" "${manifest}"; then
+    log_event error "fetched manifest failed validation" \
+      source="${source_url}" rev="${rev}" path="${manifest}" \
+      reason="see plugin-validator.sh output above for the violation list" \
+      language=_plugins
+    failed=$((failed + 1))
+    continue
+  fi
+
   schema_version="$(yq -r '.schema_version' "${manifest}" 2>/dev/null || echo "")"
   if [[ -z "${schema_version}" || "${schema_version}" == "null" ]]; then
     log_event error "manifest schema_version not readable" \
@@ -227,9 +284,14 @@ for i in $(seq 0 $((plugin_count - 1))); do
     continue
   fi
 
-  # Build an entry for this source. Entries get sorted by `source` before write.
-  entry_block="$(printf '  - source: %s\n    rev: %s\n    sha: %s\n    schema_version: %s\n    content_hash: sha256:%s\n' \
-    "${source_url}" "${rev}" "${sha}" "${schema_version}" "${content_hash}")"
+  # Build a deterministic, fully-quoted YAML entry for this source.
+  entry_block="$({
+    printf '  - source: %s\n' "$(yaml_quote "${source_url}")"
+    printf '    rev: %s\n' "$(yaml_quote "${rev}")"
+    printf '    sha: %s\n' "$(yaml_quote "${sha}")"
+    printf '    schema_version: %s\n' "${schema_version}"
+    printf '    content_hash: %s\n' "$(yaml_quote "sha256:${content_hash}")"
+  })"
   if [[ -z "${ENTRY_BY_SOURCE[${source_url}]:-}" ]]; then
     SOURCES_ORDER+=("${source_url}")
   fi

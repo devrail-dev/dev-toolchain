@@ -7,8 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Plugin resolver review follow-ups (Story 13.3 senior-developer review):
+  - **H1**: malformed `.devrail.yml` no longer silently treated as
+    "no plugins declared". `yq` parse failures now surface as a structured
+    error event and exit 2 instead of being swallowed by `|| echo 0`.
+  - **M1**: lockfile verifier passes the `.devrail.yml` source URL via
+    `strenv()` instead of string-interpolating it into the yq query —
+    defends against malformed/malicious source values breaking the query.
+  - **M2**: slug collisions (two plugin sources with the same `basename`)
+    are now detected upfront and rejected with a clear "plugin slug
+    collision" error event. Previously the second plugin would silently
+    overwrite the first's cache.
+  - **M3**: `fetch_to_cache` now performs an atomic swap (move existing
+    target aside, install new, remove old) so concurrent `make check`
+    invocations during a `make plugins-update` see either the old tree
+    or the new one — never an absent or half-populated path.
+  - **M4**: `compute_content_hash` and `derive_slug` extracted to
+    `lib/plugin-cache.sh` and shared between resolver and verifier
+    (was duplicated; future drift risk eliminated).
+  - **M5**: resolver now invokes `plugin-validator.sh` on the fetched
+    manifest before computing content_hash. Authors hit manifest
+    structural issues at `make plugins-update` time, not at every
+    subsequent `make check`.
+  - **L1**: `fetch_to_cache` comment updated to reflect 4 args (not 3).
+  - **L2**: `derive_slug` strips the `.git` suffix so
+    `https://example.com/foo.git` produces cache path
+    `<plugins-dir>/foo/<rev>/`, not `<plugins-dir>/foo.git/<rev>/`.
+  - **L3**: lockfile entries written with double-quoted YAML scalars so
+    source URLs containing colons, brackets, or other reserved chars
+    don't break parsing.
+  - **L4**: smoke test now covers `_plugins-update` no-op when no
+    plugins declared (companion to existing `_plugins-verify` case).
+  - **L5**: idempotent-fetch test now asserts cache sentinel `.devrail.sha`
+    mtime is stable across re-runs (proves no re-clone happened).
+  - **L6**: smoke test exercises a `.git`-suffixed source URL.
+
 ### Added
 
+- `lib/plugin-cache.sh` — shared `derive_slug` and `compute_content_hash`
+  helpers used by the resolver and verifier. Single source of truth for
+  the on-disk cache layout.
+- `tests/test-plugin-resolver.sh` extended from 11 to 16 cases
+  (review-fix coverage: yq parse error, slug collision, `.git` suffix,
+  no-plugins update no-op, mtime-based idempotency).
 - Plugin resolver and lockfile (Story 13.3, Epic 13 / v1.10.x preview).
   - **`make plugins-update`** — public target that resolves every
     `.devrail.yml` plugin's `rev:` to an immutable SHA via `git ls-remote`,

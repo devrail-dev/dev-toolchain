@@ -10,7 +10,7 @@
 #          Exit 0 — verified or no-op (no plugins declared)
 #          Exit 2 — disagreement, missing lockfile, or tampering detected
 #
-# Dependencies: yq v4+, sha256sum, find, sort, lib/log.sh
+# Dependencies: yq v4+, sha256sum, find, sort, lib/log.sh, lib/plugin-cache.sh
 
 set -euo pipefail
 LC_ALL=C
@@ -22,6 +22,8 @@ DEVRAIL_LIB="${DEVRAIL_LIB:-${SCRIPT_DIR}/../lib}"
 
 # shellcheck source=../lib/log.sh
 source "${DEVRAIL_LIB}/log.sh"
+# shellcheck source=../lib/plugin-cache.sh
+source "${DEVRAIL_LIB}/plugin-cache.sh"
 
 # --- Help ---
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -43,11 +45,23 @@ fi
 
 require_cmd "yq" "yq is required (v4+)"
 
+# Distinguish "yq parse error" from "no plugins declared" (review fix H1).
+parse_plugin_count() {
+  local count
+  if ! count="$(yq -r '.plugins // [] | length' "${DEVRAIL_YML}" 2>&1)"; then
+    log_event error "config could not be parsed by yq" \
+      path="${DEVRAIL_YML}" reason="${count}" language=_plugins
+    return 1
+  fi
+  printf "%s" "${count}"
+}
+
+if ! plugin_count="$(parse_plugin_count)"; then
+  exit 2
+fi
+
 # --- No-op when no plugins declared (regression-safe for v1.9.x consumers) ---
-plugin_count="$(yq -r '.plugins // [] | length' "${DEVRAIL_YML}" 2>/dev/null || echo 0)"
 if [[ "${plugin_count}" == "0" ]]; then
-  # Even if .devrail.lock exists, having no plugins declared means there is
-  # nothing for the loader to load. Quietly succeed.
   exit 0
 fi
 
@@ -62,19 +76,6 @@ fi
 
 require_cmd "sha256sum" "sha256sum is required (coreutils)"
 
-# compute_content_hash <dir>
-compute_content_hash() {
-  local dir="$1"
-  (cd "${dir}" && find . -type f \
-    -not -path './.git/*' \
-    -not -name '.devrail.sha' \
-    -print0 |
-    sort -z |
-    xargs -0 sha256sum |
-    sha256sum |
-    cut -d' ' -f1)
-}
-
 # --- Cross-check every yml entry has a matching lock entry with same rev ---
 violations=0
 for i in $(seq 0 $((plugin_count - 1))); do
@@ -87,7 +88,10 @@ for i in $(seq 0 $((plugin_count - 1))); do
     continue
   fi
 
-  lock_rev="$(yq -r ".plugins[] | select(.source == \"${yml_source}\") | .rev" "${LOCKFILE}" 2>/dev/null | head -1)"
+  # Pass yml_source via env (strenv) so a malicious source URL with quotes,
+  # backslashes, or yq-expression-special characters can't break the query
+  # (review fix M1).
+  lock_rev="$(yml_source="${yml_source}" yq -r '.plugins[] | select(.source == strenv(yml_source)) | .rev' "${LOCKFILE}" 2>/dev/null | head -1)"
   if [[ -z "${lock_rev}" || "${lock_rev}" == "null" ]]; then
     log_event error "lockfile mismatch" \
       source="${yml_source}" \
@@ -106,12 +110,16 @@ for i in $(seq 0 $((plugin_count - 1))); do
     continue
   fi
 
-  # Content-hash tampering check: re-compute hash of cached tree, compare
-  # to the lockfile-recorded hash.
-  recorded_hash="$(yq -r ".plugins[] | select(.source == \"${yml_source}\") | .content_hash" "${LOCKFILE}" 2>/dev/null | head -1)"
+  # Content-hash tampering check.
+  recorded_hash="$(yml_source="${yml_source}" yq -r '.plugins[] | select(.source == strenv(yml_source)) | .content_hash' "${LOCKFILE}" 2>/dev/null | head -1)"
   recorded_hash="${recorded_hash#sha256:}"
 
-  slug="$(basename "${yml_source}")"
+  if ! slug="$(derive_slug "${yml_source}")"; then
+    log_event error "plugin source URL produced an invalid slug" \
+      source="${yml_source}" rev="${yml_rev}" language=_plugins
+    violations=$((violations + 1))
+    continue
+  fi
   cached_dir="${PLUGINS_DIR}/${slug}/${yml_rev}"
   if [[ ! -d "${cached_dir}" ]]; then
     log_event error "cached tree missing" \
