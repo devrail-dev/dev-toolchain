@@ -11,7 +11,7 @@
 #          Exit 2 — one or more schema violations (misconfiguration)
 #          Exit 3 — manifest file not found / unreadable
 #
-# Dependencies: yq (v4+, in /usr/local/bin/yq), lib/log.sh, lib/platform.sh
+# Dependencies: yq (v4+, in /usr/local/bin/yq), lib/log.sh, lib/version.sh
 
 set -euo pipefail
 
@@ -21,8 +21,6 @@ DEVRAIL_LIB="${DEVRAIL_LIB:-${SCRIPT_DIR}/../lib}"
 
 # shellcheck source=../lib/log.sh
 source "${DEVRAIL_LIB}/log.sh"
-# shellcheck source=../lib/platform.sh
-source "${DEVRAIL_LIB}/platform.sh"
 # shellcheck source=../lib/version.sh
 source "${DEVRAIL_LIB}/version.sh"
 
@@ -59,32 +57,17 @@ readonly VALID_TARGETS=(lint format_check format_fix fix test security)
 VIOLATIONS=0
 PLUGIN_NAME="unknown"
 
-# emit_violation outputs a structured JSON event for one schema violation.
+# emit_violation outputs a structured JSON error event for one schema violation.
 # Arguments: field, reason
 emit_violation() {
   local field="$1"
   local reason="$2"
-  local ts
-  ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-  printf '{"level":"error","msg":"plugin schema violation","plugin":"%s","field":"%s","reason":"%s","language":"_plugins","script":"plugin-validator.sh","ts":"%s"}\n' \
-    "${PLUGIN_NAME}" "${field}" "${reason}" "${ts}" >&2
+  log_event error "plugin schema violation" \
+    plugin="${PLUGIN_NAME}" \
+    field="${field}" \
+    reason="${reason}" \
+    language=_plugins
   VIOLATIONS=$((VIOLATIONS + 1))
-}
-
-# emit_info outputs a structured JSON event with `language: "_plugins"`.
-# Arguments: msg, [extra-key=value pairs as a single string]
-emit_info() {
-  local msg="$1"
-  local extra="${2:-}"
-  local ts
-  ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-  if [[ -n "${extra}" ]]; then
-    printf '{"level":"info","msg":"%s","plugin":"%s","language":"_plugins","script":"plugin-validator.sh","ts":"%s",%s}\n' \
-      "${msg}" "${PLUGIN_NAME}" "${ts}" "${extra}" >&2
-  else
-    printf '{"level":"info","msg":"%s","plugin":"%s","language":"_plugins","script":"plugin-validator.sh","ts":"%s"}\n' \
-      "${msg}" "${PLUGIN_NAME}" "${ts}" >&2
-  fi
 }
 
 # yq_field reads a scalar field; prints empty string when missing.
@@ -106,12 +89,14 @@ yq_type() {
 }
 
 # --- Best-effort plugin name extraction (used in error events) ---
+# Only adopt the name if it passes the regex; otherwise keep "unknown" so a
+# malformed name can't taint subsequent JSON events.
 _name_value="$(yq_field "name")"
-if [[ -n "${_name_value}" ]]; then
+if [[ -n "${_name_value}" && "${_name_value}" =~ ${NAME_REGEX} ]]; then
   PLUGIN_NAME="${_name_value}"
 fi
 
-emit_info "validating manifest" "\"path\":\"${MANIFEST}\""
+log_event info "validating manifest" plugin="${PLUGIN_NAME}" path="${MANIFEST}" language=_plugins
 
 # --- Validate schema_version ---
 sv_type="$(yq_type "schema_version")"
@@ -210,11 +195,55 @@ else
   fi
 fi
 
+# --- Validate gates (optional but if present, must be well-formed) ---
+# Per design: gates is a mapping of target-name → list of paths. Each gate
+# is validated even though gate evaluation happens in Story 13.5; failing
+# closed at validation time prevents runtime crashes downstream.
+gates_type="$(yq_type "gates")"
+if [[ "${gates_type}" != "missing" ]]; then
+  if [[ "${gates_type}" != "!!map" ]]; then
+    emit_violation "gates" "must be a mapping; got ${gates_type}"
+  else
+    declared_gates="$(yq -r '.gates | keys | .[]' "${MANIFEST}" 2>/dev/null || true)"
+    while IFS= read -r gate_name; do
+      [[ -z "${gate_name}" ]] && continue
+      # Gate key must be one of the valid target names
+      gate_known=0
+      for valid in "${VALID_TARGETS[@]}"; do
+        if [[ "${gate_name}" == "${valid}" ]]; then
+          gate_known=1
+          break
+        fi
+      done
+      if [[ "${gate_known}" -eq 0 ]]; then
+        emit_violation "gates.${gate_name}" "unknown target '${gate_name}' (valid: ${VALID_TARGETS[*]})"
+        continue
+      fi
+      # Gate value must be a sequence (list)
+      gate_value_type="$(yq_type "gates.${gate_name}")"
+      if [[ "${gate_value_type}" != "!!seq" ]]; then
+        emit_violation "gates.${gate_name}" "must be a list of paths; got ${gate_value_type}"
+        continue
+      fi
+      # Each entry must be a string
+      gate_entries="$(yq -r ".gates.${gate_name} | .[] | type" "${MANIFEST}" 2>/dev/null || true)"
+      gate_idx=0
+      while IFS= read -r entry_type; do
+        [[ -z "${entry_type}" ]] && continue
+        if [[ "${entry_type}" != "!!str" ]]; then
+          emit_violation "gates.${gate_name}[${gate_idx}]" "must be a string; got ${entry_type}"
+        fi
+        gate_idx=$((gate_idx + 1))
+      done <<<"${gate_entries}"
+    done <<<"${declared_gates}"
+  fi
+fi
+
 # --- Final outcome ---
 if [[ "${VIOLATIONS}" -gt 0 ]]; then
-  emit_info "manifest validation failed" "\"violations\":${VIOLATIONS}"
+  log_event info "manifest validation failed" plugin="${PLUGIN_NAME}" violations:="${VIOLATIONS}" language=_plugins
   exit 2
 fi
 
-emit_info "manifest valid" "\"schema_version\":${EXPECTED_SCHEMA_VERSION}"
+log_event info "manifest valid" plugin="${PLUGIN_NAME}" schema_version:="${EXPECTED_SCHEMA_VERSION}" language=_plugins
 exit 0

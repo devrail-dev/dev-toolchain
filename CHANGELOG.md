@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Plugin loader review follow-ups (Story 13.2 senior-developer review):
+  - Manifest cache path now includes `<rev>` per design — the loader looks for
+    manifests at `${DEVRAIL_PLUGINS_DIR}/<source-slug>/<rev>/plugin.devrail.yml`
+    instead of `<source-slug>/plugin.devrail.yml`. Lets multiple plugin
+    versions coexist on disk; aligns with what Story 13.3's resolver will
+    populate. Plugin entries in `.devrail.yml` must declare `rev:`; missing
+    `rev` now fails fast with a clear error.
+  - Manifest cache file (`/tmp/devrail-plugins-loaded.yaml`) now contains
+    the FULL manifest content (`targets`, `gates`, `container`, etc.) merged
+    with resolution metadata (`source`, `rev`, `manifest_path`) per the
+    design's "yq-flattened map of plugin name → manifest contents" intent.
+    Story 13.5's execution loop will be able to consume the cache directly
+    instead of re-reading every manifest from disk.
+  - Validator now checks the optional `gates` field — must be a mapping of
+    valid target names to lists of strings. Malformed gates fail at
+    validation time instead of crashing Story 13.5's gate evaluator.
+  - Validator routes structured events through `lib/log.sh`'s new
+    `log_event` function instead of hand-crafting JSON. Honours
+    `DEVRAIL_LOG_FORMAT=human` like the rest of the codebase.
+  - Plugin name is now regex-validated before being embedded in early
+    diagnostic events, so a malformed manifest can't taint pre-validation
+    JSON output.
+  - `lib/version.sh` warns when `/opt/devrail/VERSION` exists but is
+    unreadable, instead of silently falling through to the lenient
+    `0.0.0-dev` mode (would have masked permission misconfiguration).
+  - Removed unused `lib/platform.sh` source from `plugin-validator.sh`.
+
+### Added
+
+- `lib/log.sh::log_event` — structured logger that accepts arbitrary extra
+  fields (`key=value` for strings, `key:=value` for raw numbers/booleans).
+  Suppresses info events under `DEVRAIL_QUIET=1`, debug events unless
+  `DEVRAIL_DEBUG=1`, mirrors the existing logger conventions.
+- `tests/fixtures/plugins/bad-gates/v1.0.0/plugin.devrail.yml` — fixture for
+  the new gates-validation check.
+- `tests/test-plugin-loader.sh` extended with: empty-`plugins:[]` case,
+  cache full-manifest contract assertion (consumes `targets.lint.cmd` and
+  resolution metadata via `yq`), missing-`rev` integration case, and the
+  bad-gates unit case. Total: 11 checks (was 8).
+
 ## [1.10.0] - 2026-05-01
 
 ### Fixed

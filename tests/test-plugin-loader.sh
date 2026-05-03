@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # tests/test-plugin-loader.sh — Validate the plugin manifest parser + loader (Story 13.2)
 #
-# Verifies, against checked-in fixtures under tests/fixtures/plugins/:
+# Verifies, against checked-in fixtures under tests/fixtures/plugins/<slug>/v1.0.0/:
 #   1. The validator accepts a valid v1 manifest.
 #   2. Each negative fixture (invalid-schema, incompatible-version, bad-name,
-#      missing-field) is rejected with the expected JSON event.
+#      missing-field, bad-gates) is rejected with the expected JSON event.
 #   3. The Makefile loader (`_plugins-load`) is a no-op when .devrail.yml has
-#      no `plugins:` section — regression safety for v1.9.x consumers.
+#      no `plugins:` section AND when `plugins: []` (regression safety).
 #   4. The Makefile loader exits 2 when any declared plugin's manifest fails.
-#   5. The Makefile loader writes a parsed cache when all manifests pass.
+#   5. The Makefile loader exits 2 when a plugin entry is missing `source` or `rev`.
+#   6. The Makefile loader writes a parsed cache that includes the FULL manifest
+#      content (targets, gates, etc.) merged with resolution metadata.
 #
 # Usage: bash tests/test-plugin-loader.sh
 # Env:
@@ -38,7 +40,7 @@ run_validator() {
     -v "$FIXTURE_BASE:/fixtures:ro" \
     -e DEVRAIL_VERSION="${DEVRAIL_VERSION_OVERRIDE:-1.10.0}" \
     "$IMAGE" \
-    bash /opt/devrail/scripts/plugin-validator.sh "/fixtures/$fixture/plugin.devrail.yml" \
+    bash /opt/devrail/scripts/plugin-validator.sh "/fixtures/$fixture/v1.0.0/plugin.devrail.yml" \
     2>&1
 }
 
@@ -93,6 +95,13 @@ assert_eq "2" "$exit_code" "missing-field exit code"
 echo "$out" >"$WORKDIR/missing-field.events"
 assert_jq "$WORKDIR/missing-field.events" 'select(.level=="error" and .field=="targets" and (.reason | contains("required field is missing")))' "missing-field violation event"
 
+echo "==> Unit: bad-gates → exit 2, gates type + unknown target violations"
+out="$(run_validator bad-gates)" && exit_code=0 || exit_code=$?
+assert_eq "2" "$exit_code" "bad-gates exit code"
+echo "$out" >"$WORKDIR/bad-gates.events"
+assert_jq "$WORKDIR/bad-gates.events" 'select(.level=="error" and .field=="gates.lint" and (.reason | contains("must be a list of paths")))' "bad-gates lint-not-a-list violation"
+assert_jq "$WORKDIR/bad-gates.events" 'select(.level=="error" and .field=="gates.unknown-target")' "bad-gates unknown-target violation"
+
 # --- Integration: full _plugins-load loader against synthetic .devrail.yml --
 
 echo "==> Integration: no plugins section → loader exits 0 with 'no plugins' event"
@@ -110,7 +119,23 @@ assert_eq "0" "$exit_code" "no-plugins-section exit code"
 echo "$out" >"$WORKDIR/no-plugins.events"
 assert_jq "$WORKDIR/no-plugins.events" 'select(.msg=="no plugins declared")' "no-plugins-declared event"
 
-echo "==> Integration: valid plugin → loader exits 0, writes cache, emits summary"
+echo "==> Integration: empty plugins:[] array → loader exits 0 with 'no plugins' event"
+mkdir -p "$WORKDIR/empty-plugins"
+cat >"$WORKDIR/empty-plugins/.devrail.yml" <<'YAML'
+languages: [bash]
+plugins: []
+YAML
+out="$(docker run --rm \
+  -v "$WORKDIR/empty-plugins:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -w /workspace \
+  "$IMAGE" \
+  make _plugins-load 2>&1)" && exit_code=0 || exit_code=$?
+assert_eq "0" "$exit_code" "empty-plugins-array exit code"
+echo "$out" >"$WORKDIR/empty-plugins.events"
+assert_jq "$WORKDIR/empty-plugins.events" 'select(.msg=="no plugins declared")' "empty-array no-plugins event"
+
+echo "==> Integration: valid plugin → loader exits 0, writes cache w/ full manifest"
 mkdir -p "$WORKDIR/with-valid"
 cat >"$WORKDIR/with-valid/.devrail.yml" <<'YAML'
 languages: [elixir]
@@ -119,17 +144,41 @@ plugins:
     rev: v1.0.0
     languages: [elixir]
 YAML
+# Mount fixtures at /opt/devrail/plugins so the loader's rev-aware path
+# (/opt/devrail/plugins/<slug>/<rev>/plugin.devrail.yml) resolves to the
+# fixture (tests/fixtures/plugins/valid-elixir/v1.0.0/plugin.devrail.yml).
 out="$(docker run --rm \
   -v "$WORKDIR/with-valid:/workspace" \
   -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
   -v "$FIXTURE_BASE:/opt/devrail/plugins:ro" \
   -e DEVRAIL_VERSION=1.10.0 \
+  -e DEVRAIL_PLUGINS_CACHE=/workspace/cache.yaml \
   -w /workspace \
   "$IMAGE" \
   make _plugins-load 2>&1)" && exit_code=0 || exit_code=$?
 assert_eq "0" "$exit_code" "valid-plugin exit code"
 echo "$out" >"$WORKDIR/with-valid.events"
 assert_jq "$WORKDIR/with-valid.events" 'select(.msg=="plugin loader complete" and .loaded==1 and .failed==0)' "valid-plugin loader-complete event"
+
+# Verify cache contains the FULL manifest content (Story 13.5 contract)
+cache_yaml="$WORKDIR/with-valid/cache.yaml"
+if [ ! -r "$cache_yaml" ]; then
+  echo "FAIL [valid-plugin cache file missing]: expected $cache_yaml" >&2
+  exit 1
+fi
+cache_loaded_count=$(yq -r '.plugins | length' "$cache_yaml")
+assert_eq "1" "$cache_loaded_count" "cache plugins count"
+cache_lint_cmd=$(yq -r '.plugins[0].targets.lint.cmd' "$cache_yaml")
+if [ -z "$cache_lint_cmd" ] || [ "$cache_lint_cmd" = "null" ]; then
+  echo "FAIL [cache full-manifest contract]: cache .plugins[0].targets.lint.cmd is missing — Story 13.5 needs the full manifest in the cache, not just metadata" >&2
+  yq . "$cache_yaml" >&2 2>/dev/null || cat "$cache_yaml" >&2
+  exit 1
+fi
+cache_source=$(yq -r '.plugins[0].source' "$cache_yaml")
+cache_rev=$(yq -r '.plugins[0].rev' "$cache_yaml")
+assert_eq "github.com/community/valid-elixir" "$cache_source" "cache resolution metadata: source"
+assert_eq "v1.0.0" "$cache_rev" "cache resolution metadata: rev"
+echo "    cache contains full manifest + resolution metadata: PASS"
 
 echo "==> Integration: invalid plugin → loader exits 2 with failed counter"
 mkdir -p "$WORKDIR/with-invalid"
@@ -151,5 +200,25 @@ out="$(docker run --rm \
 assert_eq "2" "$exit_code" "invalid-plugin exit code"
 echo "$out" >"$WORKDIR/with-invalid.events"
 assert_jq "$WORKDIR/with-invalid.events" 'select(.msg=="plugin loader complete" and .failed >= 1)' "invalid-plugin failure-summary event"
+
+echo "==> Integration: plugin entry missing rev → loader exits 2 with clear error"
+mkdir -p "$WORKDIR/missing-rev"
+cat >"$WORKDIR/missing-rev/.devrail.yml" <<'YAML'
+languages: [elixir]
+plugins:
+  - source: github.com/community/valid-elixir
+    languages: [elixir]
+YAML
+out="$(docker run --rm \
+  -v "$WORKDIR/missing-rev:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -v "$FIXTURE_BASE:/opt/devrail/plugins:ro" \
+  -e DEVRAIL_VERSION=1.10.0 \
+  -w /workspace \
+  "$IMAGE" \
+  make _plugins-load 2>&1)" && exit_code=0 || exit_code=$?
+assert_eq "2" "$exit_code" "missing-rev exit code"
+echo "$out" >"$WORKDIR/missing-rev.events"
+assert_jq "$WORKDIR/missing-rev.events" 'select(.msg=="plugin entry missing rev field")' "missing-rev error event"
 
 echo "==> All plugin-loader smoke checks passed"
