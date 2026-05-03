@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.2] - 2026-05-03
+
 ### Fixed
 
 - Plugin resolver review follow-ups (Story 13.3 senior-developer review):
