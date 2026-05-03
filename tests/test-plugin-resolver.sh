@@ -16,6 +16,11 @@
 #   9. No-regression — `.devrail.yml` without `plugins:` → _plugins-verify exits 0
 #  10. Unreachable source — file:///nonexistent path; resolver exits 2
 #  11. Atomic lockfile — failure after one successful resolution leaves prior lockfile intact
+#  12. Malformed YAML — yq parse error surfaces as exit 2, not silent success (review fix H1)
+#  13. Slug collision — two distinct sources, same basename → fail fast (review fix M2)
+#  14. .git-suffixed source URL — basename strips .git; cache path is clean (review fix L2/L6)
+#  15. plugins-update no-op when no plugins declared (review fix L4)
+#  16. Idempotent fetch verified by cache sentinel mtime stability (review fix L5)
 #
 # Usage: bash tests/test-plugin-resolver.sh
 # Env:
@@ -224,8 +229,9 @@ plugins:
     languages: [elixir]
 YAML
 run_make "$WORKDIR/case6" _plugins-update >/dev/null
-# Tamper with the lockfile by flipping the rev
-sed -i 's/rev: v1\.0\.0/rev: v9.9.9/' "$WORKDIR/case6/.devrail.lock"
+# Tamper with the lockfile by flipping the rev. Lockfile entries use
+# double-quoted YAML scalars (review fix L3), so match the quoted form.
+sed -i 's/rev: "v1\.0\.0"/rev: "v9.9.9"/' "$WORKDIR/case6/.devrail.lock"
 run_make "$WORKDIR/case6" _plugins-verify
 echo "$RUN_OUT" >"$WORKDIR/case6.log"
 assert_eq "2" "$RUN_EXIT" "case6 verify exit code"
@@ -330,4 +336,118 @@ assert_eq "2" "$RUN_EXIT" "case11 exit code (failure expected)"
 LOCK_AFTER_HASH="$(sha256sum "$WORKDIR/case11/.devrail.lock" | cut -d' ' -f1)"
 assert_eq "$LOCK_GOOD_HASH" "$LOCK_AFTER_HASH" "case11 atomic lockfile preserved"
 
-echo "==> All plugin-resolver smoke checks passed (11/11)"
+# --- Case 12: malformed YAML produces a parse error, not silent success ---
+# Review fix H1. Without this, the previous resolver would have read
+# `plugins | length` as 0 and exited 0, treating broken YAML as "no plugins".
+echo "==> Case 12: malformed YAML in .devrail.yml"
+mkdir -p "$WORKDIR/case12"
+cat >"$WORKDIR/case12/.devrail.yml" <<'YAML'
+languages: [elixir]
+plugins:
+  - source: not-yaml: ][}{
+    rev: v1.0.0
+YAML
+run_make "$WORKDIR/case12" _plugins-update
+echo "$RUN_OUT" >"$WORKDIR/case12.log"
+assert_eq "2" "$RUN_EXIT" "case12 exit code"
+assert_jq "$WORKDIR/case12.log" 'select(.level=="error" and .msg=="config could not be parsed by yq")' "case12 yq-parse-error event"
+
+# --- Case 13: slug collision between two distinct sources ----------------
+# Review fix M2. Two sources with different paths but matching basenames
+# would collide on `<plugins-dir>/<slug>/<rev>/`. Detect and reject.
+echo "==> Case 13: slug collision detection"
+build_local_git_repo elixir-v1 "$WORKDIR/elixir-collide-a"
+build_local_git_repo elixir-v1 "$WORKDIR/elixir-collide-b"
+mkdir -p "$WORKDIR/case13"
+cat >"$WORKDIR/case13/.devrail.yml" <<YAML
+languages: [elixir]
+plugins:
+  - source: file://$WORKDIR/elixir-collide-a/elixir
+    rev: v1.0.0
+    languages: [elixir]
+  - source: file://$WORKDIR/elixir-collide-b/elixir
+    rev: v1.0.0
+    languages: [elixir-2]
+YAML
+# Both sources produce slug "elixir" via basename — but the URLs differ.
+# Note: the actual git repos are at .../elixir-collide-{a,b}, not .../elixir,
+# so resolve_ref will fail too. The slug-collision event must fire BEFORE the
+# ref-resolution attempt for the second entry.
+run_make "$WORKDIR/case13" _plugins-update
+echo "$RUN_OUT" >"$WORKDIR/case13.log"
+assert_eq "2" "$RUN_EXIT" "case13 exit code"
+assert_jq "$WORKDIR/case13.log" 'select(.level=="error" and .msg=="plugin slug collision")' "case13 slug-collision event"
+
+# --- Case 14: source URL with .git suffix produces a clean slug ----------
+# Review fix L2/L6. basename strips the .git suffix so the cache path is
+# `<plugins-dir>/<name>/<rev>/`, not `<plugins-dir>/<name>.git/<rev>/`.
+echo "==> Case 14: source URL with .git suffix"
+mkdir -p "$WORKDIR/elixir-with-git-suffix"
+cp -a "$WORKDIR/elixir-repo/.git" "$WORKDIR/elixir-with-git-suffix.git" 2>/dev/null || true
+# Build a fresh repo whose URL ends in .git
+build_local_git_repo elixir-v1 "$WORKDIR/elixir-bar.git"
+mkdir -p "$WORKDIR/case14"
+cat >"$WORKDIR/case14/.devrail.yml" <<YAML
+languages: [elixir]
+plugins:
+  - source: file://$WORKDIR/elixir-bar.git
+    rev: v1.0.0
+    languages: [elixir]
+YAML
+run_make "$WORKDIR/case14" _plugins-update
+echo "$RUN_OUT" >"$WORKDIR/case14.log"
+assert_eq "0" "$RUN_EXIT" "case14 exit code"
+# Cache files are root-owned 0700 inside docker; check via sidecar container.
+if ! docker run --rm -v "$WORKDIR/plugins-cache:/cache:ro" "$IMAGE" \
+  sh -c 'test -d /cache/elixir-bar/v1.0.0' >/dev/null 2>&1; then
+  echo "FAIL [case14]: expected cache at .../elixir-bar/v1.0.0 (without .git suffix)" >&2
+  exit 1
+fi
+
+# --- Case 15: _plugins-update no-op when no plugins declared -------------
+# Review fix L4. Companion to Case 9 (which tested _plugins-verify).
+echo "==> Case 15: _plugins-update no-op with no plugins"
+mkdir -p "$WORKDIR/case15"
+cat >"$WORKDIR/case15/.devrail.yml" <<'YAML'
+languages: [bash]
+YAML
+run_make "$WORKDIR/case15" _plugins-update
+echo "$RUN_OUT" >"$WORKDIR/case15.log"
+assert_eq "0" "$RUN_EXIT" "case15 exit code"
+assert_jq "$WORKDIR/case15.log" 'select(.level=="info" and (.msg | contains("no plugins declared")))' "case15 no-plugins info event"
+[ ! -f "$WORKDIR/case15/.devrail.lock" ] || {
+  echo "FAIL [case15]: should not generate .devrail.lock when no plugins declared" >&2
+  exit 1
+}
+
+# --- Case 16: idempotent fetch verified by cache mtime stability ---------
+# Review fix L5. Case 5 only asserted the "plugin already cached" event;
+# this case additionally asserts the cached .devrail.sha sentinel mtime
+# is stable across re-runs (proves no re-clone happened).
+echo "==> Case 16: idempotent fetch leaves cache mtime stable"
+mkdir -p "$WORKDIR/case16"
+cat >"$WORKDIR/case16/.devrail.yml" <<YAML
+languages: [elixir]
+plugins:
+  - source: $GIT_URL_VALID
+    rev: v1.0.0
+    languages: [elixir]
+YAML
+# Cache files are written as root inside docker (mktemp creates 0700 dirs);
+# read sentinel mtime via a sidecar docker run rather than from the host.
+read_sentinel_mtime() {
+  docker run --rm -v "$WORKDIR/plugins-cache:/cache:ro" "$IMAGE" \
+    sh -c 'stat -c %Y /cache/elixir-repo/v1.0.0/.devrail.sha 2>/dev/null'
+}
+run_make "$WORKDIR/case16" _plugins-update >/dev/null
+mtime_before="$(read_sentinel_mtime)"
+if [ -z "$mtime_before" ]; then
+  echo "FAIL [case16]: .devrail.sha sentinel missing after first update" >&2
+  exit 1
+fi
+sleep 1
+run_make "$WORKDIR/case16" _plugins-update >/dev/null
+mtime_after="$(read_sentinel_mtime)"
+assert_eq "$mtime_before" "$mtime_after" "case16 sentinel mtime unchanged across re-update"
+
+echo "==> All plugin-resolver smoke checks passed (16/16)"
