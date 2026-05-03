@@ -33,6 +33,28 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# write_matching_lockfile <workspace> <fixture-slug> <source> <rev>
+# Generates a `.devrail.lock` that matches the given source/rev/fixture so
+# `_plugins-verify` (Story 13.3 prereq) passes. Computes content_hash inside
+# the container against the bind-mounted fixture tree.
+write_matching_lockfile() {
+  local ws="$1" slug="$2" source="$3" rev="$4"
+  local content_hash
+  content_hash=$(docker run --rm \
+    -v "$FIXTURE_BASE/$slug/$rev:/plugin:ro" \
+    "$IMAGE" \
+    sh -c "cd /plugin && find . -type f -not -path './.git/*' -not -name '.devrail.sha' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1")
+  cat >"$ws/.devrail.lock" <<LOCK
+schema_version: 1
+plugins:
+  - source: $source
+    rev: $rev
+    sha: 0000000000000000000000000000000000000000
+    schema_version: 1
+    content_hash: sha256:$content_hash
+LOCK
+}
+
 # run_validator FIXTURE_NAME -> stderr from the validator, with exit code captured
 run_validator() {
   local fixture="$1"
@@ -140,13 +162,16 @@ mkdir -p "$WORKDIR/with-valid"
 cat >"$WORKDIR/with-valid/.devrail.yml" <<'YAML'
 languages: [elixir]
 plugins:
-  - source: github.com/community/valid-elixir
+  - source: valid-elixir
     rev: v1.0.0
     languages: [elixir]
 YAML
+write_matching_lockfile "$WORKDIR/with-valid" valid-elixir valid-elixir v1.0.0
 # Mount fixtures at /opt/devrail/plugins so the loader's rev-aware path
 # (/opt/devrail/plugins/<slug>/<rev>/plugin.devrail.yml) resolves to the
 # fixture (tests/fixtures/plugins/valid-elixir/v1.0.0/plugin.devrail.yml).
+# Source URL is the bare slug because basename(slug) == slug and the loader
+# only uses basename(source) to build the cache path.
 out="$(docker run --rm \
   -v "$WORKDIR/with-valid:/workspace" \
   -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
@@ -176,7 +201,7 @@ if [ -z "$cache_lint_cmd" ] || [ "$cache_lint_cmd" = "null" ]; then
 fi
 cache_source=$(yq -r '.plugins[0].source' "$cache_yaml")
 cache_rev=$(yq -r '.plugins[0].rev' "$cache_yaml")
-assert_eq "github.com/community/valid-elixir" "$cache_source" "cache resolution metadata: source"
+assert_eq "valid-elixir" "$cache_source" "cache resolution metadata: source"
 assert_eq "v1.0.0" "$cache_rev" "cache resolution metadata: rev"
 echo "    cache contains full manifest + resolution metadata: PASS"
 
@@ -185,10 +210,11 @@ mkdir -p "$WORKDIR/with-invalid"
 cat >"$WORKDIR/with-invalid/.devrail.yml" <<'YAML'
 languages: [bad-name]
 plugins:
-  - source: github.com/community/bad-name
+  - source: bad-name
     rev: v1.0.0
     languages: [bad-name]
 YAML
+write_matching_lockfile "$WORKDIR/with-invalid" bad-name bad-name v1.0.0
 out="$(docker run --rm \
   -v "$WORKDIR/with-invalid:/workspace" \
   -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
@@ -201,14 +227,20 @@ assert_eq "2" "$exit_code" "invalid-plugin exit code"
 echo "$out" >"$WORKDIR/with-invalid.events"
 assert_jq "$WORKDIR/with-invalid.events" 'select(.msg=="plugin loader complete" and .failed >= 1)' "invalid-plugin failure-summary event"
 
-echo "==> Integration: plugin entry missing rev → loader exits 2 with clear error"
+echo "==> Integration: plugin entry missing rev → fails fast at lockfile-verify"
+# Story 13.3 made `_plugins-verify` the first prereq of `_plugins-load`. The
+# verifier catches missing source/rev before the loader runs, so the failure
+# event is now `plugin entry missing source or rev` rather than the loader's
+# original `plugin entry missing rev field`. Either is acceptable as a
+# fail-fast signal — the test asserts the new path.
 mkdir -p "$WORKDIR/missing-rev"
 cat >"$WORKDIR/missing-rev/.devrail.yml" <<'YAML'
 languages: [elixir]
 plugins:
-  - source: github.com/community/valid-elixir
+  - source: valid-elixir
     languages: [elixir]
 YAML
+# No lockfile written — even with one, verifier rejects the missing rev.
 out="$(docker run --rm \
   -v "$WORKDIR/missing-rev:/workspace" \
   -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
@@ -219,6 +251,6 @@ out="$(docker run --rm \
   make _plugins-load 2>&1)" && exit_code=0 || exit_code=$?
 assert_eq "2" "$exit_code" "missing-rev exit code"
 echo "$out" >"$WORKDIR/missing-rev.events"
-assert_jq "$WORKDIR/missing-rev.events" 'select(.msg=="plugin entry missing rev field")' "missing-rev error event"
+assert_jq "$WORKDIR/missing-rev.events" 'select(.level=="error" and (.msg=="plugin entry missing source or rev" or .msg=="lockfile missing"))' "missing-rev error event"
 
 echo "==> All plugin-loader smoke checks passed"

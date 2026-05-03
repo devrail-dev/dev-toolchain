@@ -62,6 +62,18 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Phase 2e: Plugin resolver + lockfile smoke test (Story 13.3)
+      # Drives `make plugins-update` against a local-filesystem git fixture
+      # (no network) covering: SHA passthrough, tag→SHA, branch rejection,
+      # lockfile determinism, idempotent fetch, lockfile mismatch, tampering
+      # detection, missing lockfile, no-plugins regression, unreachable
+      # source, atomic-lockfile-on-failure.
+      - name: Plugin resolver smoke test
+        run: bash tests/test-plugin-resolver.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 3: Security scans
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.
