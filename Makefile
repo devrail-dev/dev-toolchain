@@ -180,7 +180,15 @@ _check-config:
 # Story 13.2: runs as a prerequisite of every language-touching target. Exits 2
 # (misconfig) if any manifest is invalid, so no tool runs against a broken
 # plugin set. The fetcher (Story 13.3) populates manifest files at the
-# resolved location; tests override DEVRAIL_PLUGINS_DIR to point at fixtures.
+# rev-versioned cache path:
+#   $${DEVRAIL_PLUGINS_DIR:-/opt/devrail/plugins}/<source-slug>/<rev>/plugin.devrail.yml
+# Tests override DEVRAIL_PLUGINS_DIR to point at checked-in fixtures.
+#
+# Cache contract: $${DEVRAIL_PLUGINS_CACHE:-/tmp/devrail-plugins-loaded.yaml}
+# is a YAML document with a `plugins:` list. Each entry contains the FULL
+# manifest content merged with resolution metadata (source, rev, manifest_path)
+# so Story 13.5's execution loop can consume `.targets[]`, `.gates[]`, etc.
+# without re-reading the manifest from disk.
 .PHONY: _plugins-load
 _plugins-load: _check-config
 	@plugins_dir="$${DEVRAIL_PLUGINS_DIR:-/opt/devrail/plugins}"; \
@@ -193,28 +201,32 @@ _plugins-load: _check-config
 	fi; \
 	echo "{\"level\":\"info\",\"msg\":\"plugin loader started\",\"plugin_count\":$$plugin_count,\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
 	loaded=0; failed=0; loaded_names=""; \
-	printf 'plugins:\n' >"$$cache_file"; \
+	printf 'plugins: []\n' >"$$cache_file"; \
 	for i in $$(seq 0 $$((plugin_count - 1))); do \
 		source_url=$$(yq -r ".plugins[$$i].source // \"\"" $(DEVRAIL_CONFIG)); \
+		rev=$$(yq -r ".plugins[$$i].rev // \"\"" $(DEVRAIL_CONFIG)); \
 		if [ -z "$$source_url" ]; then \
 			echo "{\"level\":\"error\",\"msg\":\"plugin entry missing source field\",\"index\":$$i,\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
 			failed=$$((failed + 1)); \
 			continue; \
 		fi; \
+		if [ -z "$$rev" ]; then \
+			echo "{\"level\":\"error\",\"msg\":\"plugin entry missing rev field\",\"index\":$$i,\"source\":\"$$source_url\",\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
+			failed=$$((failed + 1)); \
+			continue; \
+		fi; \
 		slug=$$(basename "$$source_url"); \
-		manifest="$$plugins_dir/$$slug/plugin.devrail.yml"; \
+		manifest="$$plugins_dir/$$slug/$$rev/plugin.devrail.yml"; \
 		if [ ! -r "$$manifest" ]; then \
-			echo "{\"level\":\"error\",\"msg\":\"plugin manifest not found\",\"plugin\":\"$$slug\",\"path\":\"$$manifest\",\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
+			echo "{\"level\":\"error\",\"msg\":\"plugin manifest not found\",\"plugin\":\"$$slug\",\"rev\":\"$$rev\",\"path\":\"$$manifest\",\"language\":\"_plugins\",\"script\":\"_plugins-load\"}" >&2; \
 			failed=$$((failed + 1)); \
 			continue; \
 		fi; \
 		if bash /opt/devrail/scripts/plugin-validator.sh "$$manifest"; then \
 			loaded=$$((loaded + 1)); \
 			plugin_name=$$(yq -r '.name' "$$manifest"); \
-			plugin_version=$$(yq -r '.version' "$$manifest"); \
 			loaded_names="$${loaded_names}\"$$plugin_name\","; \
-			printf '  - name: %s\n    version: %s\n    source: %s\n    manifest: %s\n' \
-				"$$plugin_name" "$$plugin_version" "$$source_url" "$$manifest" >>"$$cache_file"; \
+			yq -i ".plugins += [load(\"$$manifest\") + {\"source\":\"$$source_url\",\"rev\":\"$$rev\",\"manifest_path\":\"$$manifest\"}]" "$$cache_file"; \
 		else \
 			failed=$$((failed + 1)); \
 		fi; \

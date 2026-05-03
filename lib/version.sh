@@ -35,6 +35,16 @@ get_devrail_version() {
     tr -d '[:space:]' </opt/devrail/VERSION
     return 0
   fi
+  # File exists but is unreadable — common in misconfigured permission setups.
+  # Warn so the caller doesn't silently get the lenient "0.0.0-dev" path and
+  # think devrail_min_version is being enforced when it isn't.
+  if [[ -e /opt/devrail/VERSION ]]; then
+    if declare -f log_warn >/dev/null 2>&1; then
+      log_warn "/opt/devrail/VERSION exists but is unreadable; falling back to 0.0.0-dev (devrail_min_version checks will be lenient)"
+    else
+      printf '{"level":"warn","msg":"/opt/devrail/VERSION exists but is unreadable; falling back to 0.0.0-dev","script":"version.sh"}\n' >&2
+    fi
+  fi
   printf "0.0.0-dev"
 }
 

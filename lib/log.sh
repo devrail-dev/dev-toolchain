@@ -151,6 +151,79 @@ die() {
   exit "${exit_code}"
 }
 
+# log_event logs a structured event with arbitrary extra fields.
+# Use this when log_info/log_warn/log_error is too narrow — e.g. plugin
+# validator emitting per-violation events with `plugin`, `field`, `reason`.
+# Honours DEVRAIL_LOG_FORMAT (json|human) and DEVRAIL_QUIET like the others.
+#
+# Arguments:
+#   $1 — level: info|warn|error|debug
+#   $2 — msg
+#   $3..N — extra fields, each as "key=value" (string values; quotes auto-added)
+#           Numeric/boolean values can be passed as "key:=raw" to bypass quoting.
+#
+# Example:
+#   log_event error "schema violation" \
+#     plugin=elixir field=schema_version reason="unsupported version 2"
+#   log_event info "loader complete" loaded:=3 failed:=0
+log_event() {
+  local level="${1:?log_event requires a level}"
+  local msg="${2:?log_event requires a message}"
+  shift 2
+
+  # Suppress info-level events when DEVRAIL_QUIET=1, mirroring log_info's behaviour
+  if [[ "${level}" == "info" && "${DEVRAIL_QUIET}" == "1" ]]; then
+    return 0
+  fi
+
+  # Suppress debug-level events unless DEVRAIL_DEBUG=1, mirroring log_debug
+  if [[ "${level}" == "debug" && "${DEVRAIL_DEBUG}" != "1" ]]; then
+    return 0
+  fi
+
+  if [[ "${DEVRAIL_LOG_FORMAT}" == "human" ]]; then
+    local extra_human=""
+    local kv key val
+    for kv in "$@"; do
+      if [[ "${kv}" == *":="* ]]; then
+        key="${kv%%:=*}"
+        val="${kv#*:=}"
+      else
+        key="${kv%%=*}"
+        val="${kv#*=}"
+      fi
+      extra_human+=" ${key}=${val}"
+    done
+    _log_human "${level}" "${msg}${extra_human}"
+    return 0
+  fi
+
+  # JSON path
+  local script_name ts
+  script_name="$(_log_get_script_name)"
+  ts="$(_log_get_timestamp)"
+  local escaped_msg
+  escaped_msg="$(printf '%s' "${msg}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+
+  local extra_json="" kv key val escaped_val
+  for kv in "$@"; do
+    if [[ "${kv}" == *":="* ]]; then
+      # Raw value (numeric/boolean/array literal) — no quoting
+      key="${kv%%:=*}"
+      val="${kv#*:=}"
+      extra_json+=",\"${key}\":${val}"
+    else
+      key="${kv%%=*}"
+      val="${kv#*=}"
+      escaped_val="$(printf '%s' "${val}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+      extra_json+=",\"${key}\":\"${escaped_val}\""
+    fi
+  done
+
+  printf '{"level":"%s","msg":"%s","script":"%s","ts":"%s"%s}\n' \
+    "${level}" "${escaped_msg}" "${script_name}" "${ts}" "${extra_json}" >&2
+}
+
 # --- Validation helpers ---
 
 # is_empty returns 0 if the argument is empty or unset
