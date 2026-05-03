@@ -78,8 +78,8 @@ DOCKER_RUN := docker run --rm \
 # ---------------------------------------------------------------------------
 # .PHONY declarations
 # ---------------------------------------------------------------------------
-.PHONY: help build lint format fix test security scan docs changelog check install-hooks init release
-.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init
+.PHONY: help build lint format fix test security scan docs changelog check install-hooks init release plugins-update
+.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
@@ -137,6 +137,9 @@ init: ## Scaffold config files for declared languages
 lint: ## Run all linters
 	$(DOCKER_RUN) make _lint
 
+plugins-update: ## Resolve plugin refs and write .devrail.lock
+	$(DOCKER_RUN) make _plugins-update
+
 release: ## Cut a versioned release (usage: make release VERSION=1.6.0)
 	@if [ -z "$(VERSION)" ]; then \
 		echo "Error: VERSION is required. Usage: make release VERSION=1.6.0"; \
@@ -176,6 +179,23 @@ _check-config:
 		exit 2; \
 	fi
 
+# --- _plugins-update: resolve plugin refs and write .devrail.lock ---
+# Story 13.3: invoked by `make plugins-update`. Reads `.devrail.yml`,
+# resolves each `rev:` to an immutable SHA via `git ls-remote`, fetches the
+# plugin tree to the rev-aware cache path, computes content_hash, and writes
+# `.devrail.lock` atomically. No-op when no plugins are declared.
+_plugins-update: _check-config
+	@bash /opt/devrail/scripts/plugin-resolver.sh $(DEVRAIL_CONFIG)
+
+# --- _plugins-verify: lockfile-vs-config consistency check ---
+# Story 13.3: prerequisite of _plugins-load on every `make check`. Confirms
+# every `.devrail.yml` plugin entry has a matching `.devrail.lock` entry with
+# the same rev, and re-computes content_hash on the cached tree to detect
+# tag-rebase tampering. No-op when no plugins are declared (regression-safe
+# for v1.9.x consumers without `plugins:` in `.devrail.yml`).
+_plugins-verify: _check-config
+	@bash /opt/devrail/scripts/plugin-lockfile-verify.sh $(DEVRAIL_CONFIG)
+
 # --- _plugins-load: validate every plugin manifest declared in .devrail.yml ---
 # Story 13.2: runs as a prerequisite of every language-touching target. Exits 2
 # (misconfig) if any manifest is invalid, so no tool runs against a broken
@@ -190,7 +210,7 @@ _check-config:
 # so Story 13.5's execution loop can consume `.targets[]`, `.gates[]`, etc.
 # without re-reading the manifest from disk.
 .PHONY: _plugins-load
-_plugins-load: _check-config
+_plugins-load: _plugins-verify
 	@plugins_dir="$${DEVRAIL_PLUGINS_DIR:-/opt/devrail/plugins}"; \
 	cache_file="$${DEVRAIL_PLUGINS_CACHE:-/tmp/devrail-plugins-loaded.yaml}"; \
 	plugin_count=$$(yq -r '.plugins // [] | length' $(DEVRAIL_CONFIG) 2>/dev/null || echo 0); \

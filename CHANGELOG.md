@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Plugin resolver and lockfile (Story 13.3, Epic 13 / v1.10.x preview).
+  - **`make plugins-update`** — public target that resolves every
+    `.devrail.yml` plugin's `rev:` to an immutable SHA via `git ls-remote`,
+    fetches the plugin tree to
+    `${DEVRAIL_PLUGINS_DIR:-/opt/devrail/plugins}/<source-slug>/<rev>/`
+    (the same path the Story 13.2 loader reads), computes a deterministic
+    `content_hash`, and writes `.devrail.lock` atomically. Branch refs are
+    rejected with a clear error; only tags and 40-char SHAs accepted.
+  - **`.devrail.lock`** — checked into VCS by consumers, like `Gemfile.lock`
+    or `Cargo.lock`. Records `source`, `rev`, resolved `sha`, manifest
+    `schema_version`, and `content_hash` per plugin. Sorted alphabetically
+    by `source` for deterministic diffs.
+  - **`_plugins-verify`** — new internal Make target that runs as a
+    prerequisite of `_plugins-load` on every `make check`. Confirms every
+    `.devrail.yml` plugin entry has a matching lockfile entry with the
+    same rev, and re-computes `content_hash` of each cached tree to detect
+    tag-rebase tampering. Fails with code 2 on any disagreement; emits
+    structured error events with remediation hints
+    (`"run \`make plugins-update\`"`).
+  - Fully no-op when `.devrail.yml` declares no `plugins:` (regression-safe
+    for v1.9.x and v1.10.x consumers without plugin declarations).
+- `scripts/plugin-resolver.sh` and `scripts/plugin-lockfile-verify.sh` —
+  pure-bash, yq + git + sha256sum dependencies (all in image).
+- `tests/fixtures/plugin-repos/elixir-v1/` and `elixir-v1-tampered/` —
+  fixture trees (no `.git/`); the test harness initialises git per case.
+- `tests/test-plugin-resolver.sh` — 11-case smoke covering SHA passthrough,
+  tag→SHA resolution, branch rejection, lockfile determinism, idempotent
+  fetch, lockfile mismatch, tampering detection, missing lockfile,
+  no-plugins regression, unreachable source, and atomic-lockfile-on-failure.
+  Wired into `.github/workflows/ci.yml`.
+
 ## [1.10.1] - 2026-05-03
 
 ### Fixed
