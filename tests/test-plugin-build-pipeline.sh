@@ -559,20 +559,27 @@ plugins:
     languages: [minimal]
 YAML
 
-# Step 1: run plugins-update (host-side make, but resolver runs in-container).
-# This must populate $WORKDIR/case11/host-cache and write .devrail.lock.
-case11_update_out="$(cd "$WORKDIR/case11/ws" &&
-  DEVRAIL_HOST_PLUGINS_CACHE="$WORKDIR/case11/host-cache" \
-    DEVRAIL_IMAGE="${IMAGE%:*}" \
-    DEVRAIL_TAG="${IMAGE##*:}" \
-    DEVRAIL_VERSION=1.10.0 \
-    make plugins-update 2>&1)" || {
-  echo "FAIL [case11]: plugins-update failed" >&2
+# Step 1: run _plugins-update directly (mirroring Case 4's harness — bind
+# WORKDIR at the same path inside the container so file:// URLs resolve).
+# `make plugins-update` would use the standard DOCKER_RUN which doesn't
+# mount the fixture path, so we invoke the in-container target via
+# docker run with the extra mount.
+case11_update_out="$(docker run --rm \
+  -v "$WORKDIR:$WORKDIR" \
+  -v "$WORKDIR/case11/ws:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -v "$WORKDIR/case11/host-cache:/opt/devrail/plugins" \
+  -e DEVRAIL_VERSION=1.10.0 \
+  -w /workspace \
+  "$IMAGE" \
+  make _plugins-update 2>&1)" || {
+  echo "FAIL [case11]: _plugins-update failed" >&2
   echo "$case11_update_out" >&2
   exit 1
 }
 [ -r "$WORKDIR/case11/ws/.devrail.lock" ] || {
-  echo "FAIL [case11]: .devrail.lock not written by plugins-update" >&2
+  echo "FAIL [case11]: .devrail.lock not written by _plugins-update" >&2
+  echo "$case11_update_out" >&2
   exit 1
 }
 
