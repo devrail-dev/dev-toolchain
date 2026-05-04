@@ -74,6 +74,15 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Phase 2f: Plugin build-pipeline smoke test (Story 13.4a)
+      # Generator unit + host cache mount validation. Story 13.4b will extend
+      # this with full docker-build pipeline cases.
+      - name: Plugin build-pipeline smoke test
+        run: bash tests/test-plugin-build-pipeline.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 3: Security scans
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.

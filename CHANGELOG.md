@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Plugin build pipeline foundations (Story 13.4a, Epic 13 / v1.10.x preview):
+  - **Host-side persistent plugin cache.** `DEVRAIL_HOST_PLUGINS_CACHE`
+    Makefile variable (defaults to `${HOME}/.cache/devrail/plugins`) is
+    bind-mounted into every `DOCKER_RUN` at `/opt/devrail/plugins`. Plugin
+    manifests fetched by `make plugins-update` now survive across container
+    invocations. Closes a Story 13.3 gap where the cache was ephemeral.
+  - **`scripts/plugin-build-extended-image.sh`** — generates a workspace-
+    local `Dockerfile.devrail` from the plugin loader cache (Story 13.2)
+    that extends the core dev-toolchain image with each declared plugin's
+    `container:` fragment (`apt_packages`, `copy_from_builder`, `env`,
+    `install_script`). Output is deterministic (env vars sorted by key,
+    plugin order matches lockfile order). Pinned to the exact patch
+    version of the core image so the eventual `devrail-local:<hash>` tag
+    is stable across local invocations.
+  - **`_ensure-host-cache`** Makefile target wired as a prereq of every
+    public host target that invokes `DOCKER_RUN`. Idempotent `mkdir -p`.
+
+### Fixed
+
+- `fetch_to_cache` in `plugin-resolver.sh` now `chmod -R u+rwX,g+rX,o+rX`
+  the cached tree after the atomic swap. `mktemp -d` defaults to 0700,
+  which blocked the host user from traversing its own bind-mounted cache
+  (the `mtime` smoke test in Story 13.3 hit this and worked around it
+  via a sidecar docker container; this fix makes the workaround
+  unnecessary). Closes a Story 13.3 review-fix gap.
+
+### Other
+
+- `tests/test-plugin-build-pipeline.sh` — 4-case 13.4a smoke test:
+  empty cache → no-op, full container block → expected dockerfile
+  shape, deterministic re-runs, host cache mount + readability.
+  Story 13.4b will extend with full docker-build pipeline cases.
+
 ## [1.10.2] - 2026-05-03
 
 ### Fixed

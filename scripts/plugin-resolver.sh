@@ -178,6 +178,11 @@ fetch_to_cache() {
   if [[ -d "${old}" ]]; then
     rm -rf "${old}"
   fi
+  # Ensure the host user (when the cache is bind-mounted from the host) can
+  # traverse the cache. mktemp -d defaults to 0700, which blocks the host
+  # user from reading its own bind-mounted cache. Apply 0755 to dirs and
+  # readable mode to files. Story 13.4 review fold-in (closes 13.3 gap).
+  chmod -R u+rwX,g+rX,o+rX "${target}" 2>/dev/null || true
 }
 
 # yaml_quote <string> — render a value as a double-quoted YAML scalar
