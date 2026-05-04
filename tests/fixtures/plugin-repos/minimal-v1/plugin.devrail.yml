@@ -1,0 +1,18 @@
+schema_version: 1
+name: minimal
+version: 1.0.0
+description: "Minimal plugin fixture for build-pipeline smoke tests (Story 13.4b)"
+devrail_min_version: 1.10.0
+
+container:
+  # Use the dev-toolchain image itself as the COPY-from source so the build
+  # doesn't need to pull anything new. We don't actually copy anything; this
+  # just gives the generator a non-empty `copy_from_builder` list to render.
+  base_image: ghcr.io/devrail-dev/dev-toolchain:local
+  env:
+    DEVRAIL_TEST_PLUGIN_VAR: "minimal-v1-marker"
+  install_script: install.sh
+
+targets:
+  lint:
+    cmd: "true"

@@ -31,7 +31,7 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | **CI workflow templates** | Stable | GitHub Actions workflows and GitLab CI pipeline shipped in template repos. |
 | **Pre-commit hooks** | Stable | Conventional commit hook and per-language hooks configured in template repos. |
 | **Documentation site** | Stable | [devrail.dev](https://devrail.dev) is live with full standards coverage. |
-| **Plugin loader + resolver + lockfile** | Preview (v1.10.x) | Validates `plugin.devrail.yml` manifests, resolves `rev:` to immutable SHAs via `make plugins-update`, records reproducibility metadata in `.devrail.lock`. Verifies lockfile + content_hash on every `make check`. No-op when `plugins:` is absent — v1.9.x behaviour unchanged. Execution loop ships in Story 13.5. |
+| **Plugin loader + resolver + lockfile + build pipeline** | Preview (v1.10.x) | Validates `plugin.devrail.yml` manifests, resolves `rev:` to immutable SHAs (`make plugins-update`), records reproducibility metadata in `.devrail.lock`, and auto-builds a project-local extended image (`devrail-local:<hash>`) when plugins are declared. Verifies lockfile + content_hash on every `make check`. No-op when `plugins:` is absent — v1.9.x behaviour unchanged. Plugin command execution (running plugin-defined `targets:`) ships in Story 13.5. |
 
 ## Consumer responsibilities
 
