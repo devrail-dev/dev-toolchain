@@ -456,8 +456,8 @@ assert_eq "0" "$RUN_EXIT" "case9 transition exit code"
   echo "FAIL [case9]: tag file should be cleared after plugins removed from .devrail.yml" >&2
   exit 1
 }
-echo "$RUN_OUT" | grep -q "no plugins declared; using core image" || {
-  echo "FAIL [case9]: expected 'no plugins declared' event after transition" >&2
+echo "$RUN_OUT" | grep -q "plugins removed; clearing stale extended-image tag" || {
+  echo "FAIL [case9]: expected 'plugins removed; clearing stale extended-image tag' event after transition" >&2
   echo "$RUN_OUT" >&2
   exit 1
 }
