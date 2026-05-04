@@ -38,7 +38,10 @@ DEVRAIL_RESOLVED_IMAGE = $(if $(and $(wildcard .devrail/extended-image-tag),$(HA
 # Probe .devrail.yml in a single shell invocation that distinguishes missing
 # file, yq parse error, and valid + plugin-count. Without this, a malformed
 # `.devrail.yml` would silently fall through as "no plugins" and skip the
-# extended-image build (review finding H1).
+# extended-image build (review finding H1). The "error" value is checked
+# explicitly inside `_extended-image` rather than via `$(error ...)` so other
+# targets (e.g., `_plugins-update`) can still run and let their scripts
+# surface the structured parse-error event for the user.
 DEVRAIL_PLUGIN_PROBE := $(shell \
 	if [ ! -r $(DEVRAIL_CONFIG) ]; then \
 		echo "missing"; \
@@ -48,13 +51,10 @@ DEVRAIL_PLUGIN_PROBE := $(shell \
 		echo "error"; \
 	fi)
 
-ifeq ($(DEVRAIL_PLUGIN_PROBE),error)
-$(error .devrail.yml exists but yq failed to parse it — run `yq '.' $(DEVRAIL_CONFIG)` to see the error)
-endif
-
 # HAS_PLUGINS_DECLARED — set when .devrail.yml has a non-empty `plugins:` list.
-# Empty when file is missing or `plugins:` is `[]`/absent.
-HAS_PLUGINS_DECLARED := $(if $(filter-out missing 0,$(DEVRAIL_PLUGIN_PROBE)),yes,)
+# Empty when file is missing, `plugins:` is `[]`/absent, OR yq could not parse
+# the file (the "error" case is caught explicitly inside `_extended-image`).
+HAS_PLUGINS_DECLARED := $(if $(filter-out missing error 0,$(DEVRAIL_PLUGIN_PROBE)),yes,)
 
 # Read project-specific env vars from .devrail.yml `env:` section and inject
 # them as `-e KEY=VALUE` into DOCKER_RUN. Empty/missing section is a no-op.
@@ -167,7 +167,11 @@ _devrail-host-bin:
 # devrail-local:<hash>, and writes the tag to .devrail/extended-image-tag
 # so the recursive DOCKER_RUN picks it up. Cache hits are free.
 _extended-image: _ensure-host-cache _devrail-host-bin
-	@if [ -n "$(HAS_PLUGINS_DECLARED)" ]; then \
+	@if [ "$(DEVRAIL_PLUGIN_PROBE)" = "error" ]; then \
+		echo '{"level":"error","msg":"config could not be parsed by yq","path":"$(DEVRAIL_CONFIG)","language":"_plugins","script":"_extended-image"}' >&2; \
+		exit 2; \
+	fi; \
+	if [ -n "$(HAS_PLUGINS_DECLARED)" ]; then \
 		if [ -f scripts/plugin-extended-image.sh ]; then \
 			bash scripts/plugin-extended-image.sh; \
 		else \
