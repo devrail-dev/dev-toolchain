@@ -503,13 +503,14 @@ assert_eq "0" "$RUN_EXIT" "case10 multi-plugin exit code"
 }
 case10_tag="$(cat "$WORKDIR/case10/ws/.devrail/extended-image-tag")"
 # Both plugins must appear in the generated Dockerfile (verifies for-loop
-# iterated over both entries rather than only the first).
+# iterated over both entries rather than only the first). The generator
+# emits `# --- plugin: <name>@<rev> (source: <url>) ---` per plugin entry.
 grep -q "plugin: minimal@v1.0.0" "$WORKDIR/case10/ws/Dockerfile.devrail" || {
   echo "FAIL [case10]: generated Dockerfile.devrail missing plugin section" >&2
   cat "$WORKDIR/case10/ws/Dockerfile.devrail" >&2
   exit 1
 }
-plugin_section_count="$(grep -c '^# plugin: minimal@v1.0.0' "$WORKDIR/case10/ws/Dockerfile.devrail" || true)"
+plugin_section_count="$(grep -cE '^# --- plugin: minimal@v1.0.0' "$WORKDIR/case10/ws/Dockerfile.devrail" || true)"
 assert_eq "2" "$plugin_section_count" "case10 plugin section count in Dockerfile.devrail"
 # Sanity: both install scripts ran during build.
 docker run --rm "$case10_tag" \
