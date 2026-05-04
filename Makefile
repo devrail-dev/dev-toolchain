@@ -136,7 +136,10 @@ _ensure-host-cache:
 # extract scripts + lib from the resolved core image to .devrail/host-bin/,
 # cached and invalidated by image tag (.devrail/host-bin/.image-tag).
 _devrail-host-bin:
-	@if [ -f scripts/plugin-extended-image.sh ]; then \
+	@if [ -z "$(HAS_PLUGINS_DECLARED)" ]; then \
+		exit 0; \
+	fi; \
+	if [ -f scripts/plugin-extended-image.sh ]; then \
 		exit 0; \
 	fi; \
 	expected="$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)"; \
@@ -178,6 +181,9 @@ _extended-image: _ensure-host-cache _devrail-host-bin
 			DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" \
 				bash .devrail/host-bin/scripts/plugin-extended-image.sh; \
 		fi; \
+	elif [ -f .devrail/extended-image-tag ]; then \
+		echo '{"level":"info","msg":"plugins removed; clearing stale extended-image tag","language":"_plugins","script":"_extended-image"}' >&2; \
+		rm -f .devrail/extended-image-tag; \
 	fi
 
 help: ## Show this help
