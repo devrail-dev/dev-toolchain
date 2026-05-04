@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # tests/test-plugin-build-pipeline.sh — Validate the build pipeline (Story 13.4)
 #
-# 13.4a covers the generator only. 13.4b will extend this with full docker-build
-# pipeline cases (cache hit/miss, multi-plugin layering, install_script execution,
-# build failure surfacing). For now we exercise:
+# 11 cases: 4 are 13.4a (generator unit) + 7 are 13.4b (full docker-build pipeline).
 #
 #   1. No plugins → generator skips (no Dockerfile.devrail)
 #   2. One plugin with a full container block → expected dockerfile shape
 #   3. Generator output is byte-identical across re-runs (deterministic)
 #   4. Host cache mount: dirs created on host before docker run; root-owned
 #      cache files are still readable from the host (review fix M3 fold-in)
+#   5. Real docker build → devrail-local:<hash> exists, install_script ran, env applied
+#   6. Cache hit on second invocation
+#   7. No-plugins regression: no Dockerfile.devrail, no tag file
+#   8. install_script that exits 1 → structured error event + no tag file (review L9)
+#   9. Plugins → no-plugins transition removes stale tag file (review L10)
+#  10. Two-plugin smoke — exercises the for-loop over plugin entries (review L7)
+#  11. End-to-end: plugins-update → _extended-image against file:// fixture (review L11)
 #
 # Usage: bash tests/test-plugin-build-pipeline.sh
 # Env:
@@ -218,4 +223,370 @@ if [ ! -r "$manifest" ]; then
   exit 1
 fi
 
-echo "==> All build-pipeline (13.4a) smoke checks passed (4/4)"
+# --- Cases 5-9: Story 13.4b — full build pipeline against a real fixture --
+# These cases drive `make _extended-image` (host-side) end-to-end:
+#   5. Real docker build — devrail-local:<hash> exists; install_script ran
+#   6. Cache hit — second invocation is fast, no rebuild
+#   7. Tag file written to .devrail/extended-image-tag
+#   8. No-plugins regression — no Dockerfile.devrail, no devrail-local image
+#   9. Build failure — install_script that exits 1 surfaces structured error
+
+# For the full-pipeline cases we bypass `make plugins-update` (which would
+# need a network-reachable git source) and pre-populate the host cache
+# directly from a fixture, plus write a hand-crafted .devrail.lock with the
+# correct content_hash. This keeps the test hermetic (no git, no network)
+# and isolates the build pipeline as the system under test.
+
+# populate_cache <fixture-name> <slug> <rev> <host-cache-dir>
+# Copies the fixture tree into host-cache/<slug>/<rev>/ via docker (so file
+# perms match what the resolver would produce) and prints the content_hash
+# on stdout for the caller to use in .devrail.lock.
+populate_cache() {
+  local fixture="$1" slug="$2" rev="$3" host_cache="$4"
+  local target="$host_cache/$slug/$rev"
+  mkdir -p "$target"
+  docker run --rm \
+    -v "$REPO_ROOT/tests/fixtures/plugin-repos/$fixture:/src:ro" \
+    -v "$target:/dst" \
+    "$IMAGE" \
+    sh -c 'cp -a /src/. /dst/ && chmod -R u+rwX,g+rX,o+rX /dst' >&2
+  # Compute content_hash using the same routine as plugin-resolver.sh.
+  docker run --rm -v "$target:/d:ro" "$IMAGE" \
+    sh -c "cd /d && LC_ALL=C find . -type f -not -path './.git/*' -not -name '.devrail.sha' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1"
+}
+
+# write_lockfile <ws> <source> <rev> <content_hash>
+write_lockfile() {
+  local ws="$1" source="$2" rev="$3" content_hash="$4"
+  cat >"$ws/.devrail.lock" <<LOCK
+schema_version: 1
+plugins:
+  - source: "$source"
+    rev: "$rev"
+    sha: "0000000000000000000000000000000000000000"
+    schema_version: 1
+    content_hash: "sha256:$content_hash"
+LOCK
+}
+
+# Per-case workspace + host-cache. Symlinks scripts/ + lib/ so the host
+# orchestrator can find them; copies Makefile so `make` resolves targets.
+make_full_pipeline_ws() {
+  local case_dir="$1"
+  mkdir -p "$case_dir/ws" "$case_dir/host-cache"
+  cp "$REPO_ROOT/Makefile" "$case_dir/ws/Makefile"
+  ln -sf "$REPO_ROOT/scripts" "$case_dir/ws/scripts"
+  ln -sf "$REPO_ROOT/lib" "$case_dir/ws/lib"
+}
+
+# run_extended_image <ws> — drives only `_extended-image` (resolver was
+# bypassed; cache + lockfile are pre-populated by the test).
+run_extended_image() {
+  local ws="$1"
+  RUN_EXIT=0
+  RUN_OUT="$(cd "$ws" &&
+    DEVRAIL_HOST_PLUGINS_CACHE="$(dirname "$ws")/host-cache" \
+    DEVRAIL_IMAGE="${IMAGE%:*}" \
+    DEVRAIL_TAG="${IMAGE##*:}" \
+    DEVRAIL_VERSION=1.10.0 \
+      make _extended-image 2>&1)" || RUN_EXIT=$?
+}
+
+# --- Case 5: real build — devrail-local:<hash> exists, install_script ran ---
+echo "==> Case 5: real docker build produces devrail-local:<hash>"
+mkdir -p "$WORKDIR/case5"
+make_full_pipeline_ws "$WORKDIR/case5"
+case5_source="test-plugin-minimal"
+case5_hash="$(populate_cache minimal-v1 "$case5_source" "v1.0.0" "$WORKDIR/case5/host-cache")"
+cat >"$WORKDIR/case5/ws/.devrail.yml" <<YAML
+languages: [minimal]
+plugins:
+  - source: $case5_source
+    rev: v1.0.0
+    languages: [minimal]
+YAML
+write_lockfile "$WORKDIR/case5/ws" "$case5_source" "v1.0.0" "$case5_hash"
+run_extended_image "$WORKDIR/case5/ws"
+assert_eq "0" "$RUN_EXIT" "case5 exit code"
+echo "$RUN_OUT" | grep -qE "extended image (built|cache hit)" || {
+  echo "FAIL [case5]: missing 'extended image built' or 'cache hit' event" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+[ -r "$WORKDIR/case5/ws/.devrail/extended-image-tag" ] || {
+  echo "FAIL [case5]: .devrail/extended-image-tag not written" >&2
+  exit 1
+}
+case5_tag="$(cat "$WORKDIR/case5/ws/.devrail/extended-image-tag")"
+[[ "$case5_tag" =~ ^devrail-local:[a-f0-9]{16}$ ]] || {
+  echo "FAIL [case5]: tag not in expected format: $case5_tag" >&2
+  exit 1
+}
+# Verify the install_script actually ran during build (sentinel file present
+# alongside the script in its slug-specific directory).
+docker run --rm "$case5_tag" \
+  test -f "/opt/devrail/plugins/${case5_source}/.install-marker" || {
+  echo "FAIL [case5]: install_script did not run (marker file absent at /opt/devrail/plugins/${case5_source}/.install-marker)" >&2
+  exit 1
+}
+# Verify env var is set in the image.
+env_value="$(docker run --rm "$case5_tag" \
+  printenv DEVRAIL_TEST_PLUGIN_VAR 2>/dev/null || true)"
+assert_eq "minimal-v1-marker" "$env_value" "case5 env var DEVRAIL_TEST_PLUGIN_VAR"
+
+# --- Case 6: cache hit — second invocation reuses the image ---
+echo "==> Case 6: cache hit on second _extended-image invocation"
+case6_start="$(date +%s%3N)"
+run_extended_image "$WORKDIR/case5/ws"
+case6_end="$(date +%s%3N)"
+assert_eq "0" "$RUN_EXIT" "case6 exit code"
+echo "$RUN_OUT" | grep -q "extended image cache hit" || {
+  echo "FAIL [case6]: expected 'cache hit' event" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+case6_duration=$((case6_end - case6_start))
+# AC target: cache-hit "no-op" inside the orchestrator < 1s. End-to-end
+# `make _extended-image` adds: docker run for _generate-dockerfile (~1-2s
+# container startup), sha256 + image inspect (~100ms), tag write. Tighten
+# to 10s to keep the AC honest while leaving headroom for slow CI.
+if [ "$case6_duration" -gt 10000 ]; then
+  echo "FAIL [case6]: cache-hit path took ${case6_duration}ms — expected < 10s" >&2
+  exit 1
+fi
+
+# --- Case 7: no-plugins regression — no Dockerfile, no extended image ---
+echo "==> Case 7: no plugins → no Dockerfile.devrail, DEVRAIL_RESOLVED_IMAGE = core"
+mkdir -p "$WORKDIR/case7"
+make_full_pipeline_ws "$WORKDIR/case7"
+cat >"$WORKDIR/case7/ws/.devrail.yml" <<'YAML'
+languages: [bash]
+YAML
+RUN_EXIT=0
+RUN_OUT="$(cd "$WORKDIR/case7/ws" &&
+  DEVRAIL_HOST_PLUGINS_CACHE="$WORKDIR/case7/host-cache" \
+    DEVRAIL_IMAGE="${IMAGE%:*}" \
+    DEVRAIL_TAG="${IMAGE##*:}" \
+    make _extended-image 2>&1)" || RUN_EXIT=$?
+assert_eq "0" "$RUN_EXIT" "case7 exit code"
+[ ! -f "$WORKDIR/case7/ws/Dockerfile.devrail" ] || {
+  echo "FAIL [case7]: Dockerfile.devrail should not exist when no plugins declared" >&2
+  exit 1
+}
+[ ! -f "$WORKDIR/case7/ws/.devrail/extended-image-tag" ] || {
+  echo "FAIL [case7]: tag file should not exist when no plugins declared" >&2
+  exit 1
+}
+
+# --- Case 8: build failure — install_script that exits 1 → structured error ---
+echo "==> Case 8: install_script failure surfaces structured error"
+# Pre-populate a host cache entry whose install_script exits 1, so the docker
+# build will fail at the RUN bash install.sh layer.
+mkdir -p "$WORKDIR/case8"
+make_full_pipeline_ws "$WORKDIR/case8"
+case8_source="test-plugin-failing"
+case8_target="$WORKDIR/case8/host-cache/$case8_source/v1.0.0"
+mkdir -p "$case8_target"
+docker run --rm \
+  -v "$REPO_ROOT/tests/fixtures/plugin-repos/minimal-v1:/src:ro" \
+  -v "$case8_target:/dst" \
+  "$IMAGE" \
+  sh -c '
+    set -e
+    cp -a /src/. /dst/
+    cat >/dst/install.sh <<INSTALL
+#!/usr/bin/env bash
+echo "this install script intentionally fails" >&2
+exit 1
+INSTALL
+    chmod +x /dst/install.sh
+    chmod -R u+rwX,g+rX,o+rX /dst
+  '
+case8_hash="$(docker run --rm -v "$case8_target:/d:ro" "$IMAGE" \
+  sh -c "cd /d && LC_ALL=C find . -type f -not -path './.git/*' -not -name '.devrail.sha' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1")"
+cat >"$WORKDIR/case8/ws/.devrail.yml" <<YAML
+languages: [minimal]
+plugins:
+  - source: $case8_source
+    rev: v1.0.0
+    languages: [minimal]
+YAML
+write_lockfile "$WORKDIR/case8/ws" "$case8_source" "v1.0.0" "$case8_hash"
+run_extended_image "$WORKDIR/case8/ws"
+assert_eq "2" "$RUN_EXIT" "case8 build-failure exit code"
+echo "$RUN_OUT" | grep -q "extended image build failed" || {
+  echo "FAIL [case8]: expected 'extended image build failed' event" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+# L9: tag file must NOT be written when the build fails — DOCKER_RUN must
+# fall back to the core image rather than reference a phantom tag.
+[ ! -f "$WORKDIR/case8/ws/.devrail/extended-image-tag" ] || {
+  echo "FAIL [case8]: tag file should not exist when build fails" >&2
+  exit 1
+}
+
+# --- Case 9: transition — plugins removed from .devrail.yml clears tag file ---
+echo "==> Case 9: removing plugins from .devrail.yml clears stale tag file"
+mkdir -p "$WORKDIR/case9"
+make_full_pipeline_ws "$WORKDIR/case9"
+case9_source="test-plugin-transition"
+case9_hash="$(populate_cache minimal-v1 "$case9_source" "v1.0.0" "$WORKDIR/case9/host-cache")"
+cat >"$WORKDIR/case9/ws/.devrail.yml" <<YAML
+languages: [minimal]
+plugins:
+  - source: $case9_source
+    rev: v1.0.0
+    languages: [minimal]
+YAML
+write_lockfile "$WORKDIR/case9/ws" "$case9_source" "v1.0.0" "$case9_hash"
+run_extended_image "$WORKDIR/case9/ws"
+assert_eq "0" "$RUN_EXIT" "case9 initial build exit code"
+[ -r "$WORKDIR/case9/ws/.devrail/extended-image-tag" ] || {
+  echo "FAIL [case9]: precondition — tag file should exist after initial build" >&2
+  exit 1
+}
+# Now remove plugins from .devrail.yml and re-run.
+cat >"$WORKDIR/case9/ws/.devrail.yml" <<'YAML'
+languages: [minimal]
+YAML
+run_extended_image "$WORKDIR/case9/ws"
+assert_eq "0" "$RUN_EXIT" "case9 transition exit code"
+[ ! -f "$WORKDIR/case9/ws/.devrail/extended-image-tag" ] || {
+  echo "FAIL [case9]: tag file should be cleared after plugins removed from .devrail.yml" >&2
+  exit 1
+}
+echo "$RUN_OUT" | grep -q "no plugins declared; using core image" || {
+  echo "FAIL [case9]: expected 'no plugins declared' event after transition" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+
+# --- Case 10: multi-plugin smoke — exercise the for-loop ---
+echo "==> Case 10: two plugins build a single extended image"
+mkdir -p "$WORKDIR/case10"
+make_full_pipeline_ws "$WORKDIR/case10"
+case10_source_a="test-plugin-multi-a"
+case10_source_b="test-plugin-multi-b"
+case10_hash_a="$(populate_cache minimal-v1 "$case10_source_a" "v1.0.0" "$WORKDIR/case10/host-cache")"
+case10_hash_b="$(populate_cache minimal-v1 "$case10_source_b" "v1.0.0" "$WORKDIR/case10/host-cache")"
+cat >"$WORKDIR/case10/ws/.devrail.yml" <<YAML
+languages: [minimal]
+plugins:
+  - source: $case10_source_a
+    rev: v1.0.0
+    languages: [minimal]
+  - source: $case10_source_b
+    rev: v1.0.0
+    languages: [minimal]
+YAML
+cat >"$WORKDIR/case10/ws/.devrail.lock" <<LOCK
+schema_version: 1
+plugins:
+  - source: "$case10_source_a"
+    rev: "v1.0.0"
+    sha: "0000000000000000000000000000000000000000"
+    schema_version: 1
+    content_hash: "sha256:$case10_hash_a"
+  - source: "$case10_source_b"
+    rev: "v1.0.0"
+    sha: "0000000000000000000000000000000000000000"
+    schema_version: 1
+    content_hash: "sha256:$case10_hash_b"
+LOCK
+run_extended_image "$WORKDIR/case10/ws"
+assert_eq "0" "$RUN_EXIT" "case10 multi-plugin exit code"
+[ -r "$WORKDIR/case10/ws/.devrail/extended-image-tag" ] || {
+  echo "FAIL [case10]: tag file missing for multi-plugin build" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+case10_tag="$(cat "$WORKDIR/case10/ws/.devrail/extended-image-tag")"
+# Both plugins must appear in the generated Dockerfile (verifies for-loop
+# iterated over both entries rather than only the first).
+grep -q "plugin: minimal@v1.0.0" "$WORKDIR/case10/ws/Dockerfile.devrail" || {
+  echo "FAIL [case10]: generated Dockerfile.devrail missing plugin section" >&2
+  cat "$WORKDIR/case10/ws/Dockerfile.devrail" >&2
+  exit 1
+}
+plugin_section_count="$(grep -c '^# plugin: minimal@v1.0.0' "$WORKDIR/case10/ws/Dockerfile.devrail" || true)"
+assert_eq "2" "$plugin_section_count" "case10 plugin section count in Dockerfile.devrail"
+# Sanity: both install scripts ran during build.
+docker run --rm "$case10_tag" \
+  test -f "/opt/devrail/plugins/${case10_source_a}/.install-marker" || {
+  echo "FAIL [case10]: install_script for plugin A did not run" >&2
+  exit 1
+}
+docker run --rm "$case10_tag" \
+  test -f "/opt/devrail/plugins/${case10_source_b}/.install-marker" || {
+  echo "FAIL [case10]: install_script for plugin B did not run" >&2
+  exit 1
+}
+
+# --- Case 11: end-to-end resolver → loader → build pipeline ---
+# Cases 5-10 bypass `make plugins-update` and hand-craft .devrail.lock to keep
+# the build pipeline isolated as the system under test. Case 11 closes the
+# gap: it runs the full path against a local-fs git fixture — resolver fetches
+# the plugin, loader validates it, and the build pipeline produces the
+# extended image. This is the highest-fidelity smoke for v1.10.x.
+echo "==> Case 11: full resolver → loader → build pipeline against file:// fixture"
+mkdir -p "$WORKDIR/case11-fixture" "$WORKDIR/case11/ws" "$WORKDIR/case11/host-cache"
+docker run --rm \
+  -v "$REPO_ROOT/tests/fixtures/plugin-repos/minimal-v1:/src:ro" \
+  -v "$WORKDIR/case11-fixture:/repo" \
+  "$IMAGE" \
+  sh -c '
+    set -e
+    cp -a /src/. /repo/
+    cd /repo
+    git init --quiet
+    git config user.email "test@example.com"
+    git config user.name "Test"
+    git config commit.gpgsign false
+    git add -A
+    git commit --quiet -m "v1.0.0"
+    git tag v1.0.0
+  '
+cp "$REPO_ROOT/Makefile" "$WORKDIR/case11/ws/Makefile"
+ln -sf "$REPO_ROOT/scripts" "$WORKDIR/case11/ws/scripts"
+ln -sf "$REPO_ROOT/lib" "$WORKDIR/case11/ws/lib"
+cat >"$WORKDIR/case11/ws/.devrail.yml" <<YAML
+languages: [minimal]
+plugins:
+  - source: file://$WORKDIR/case11-fixture
+    rev: v1.0.0
+    languages: [minimal]
+YAML
+
+# Step 1: run plugins-update (host-side make, but resolver runs in-container).
+# This must populate $WORKDIR/case11/host-cache and write .devrail.lock.
+case11_update_out="$(cd "$WORKDIR/case11/ws" &&
+  DEVRAIL_HOST_PLUGINS_CACHE="$WORKDIR/case11/host-cache" \
+    DEVRAIL_IMAGE="${IMAGE%:*}" \
+    DEVRAIL_TAG="${IMAGE##*:}" \
+    DEVRAIL_VERSION=1.10.0 \
+    make plugins-update 2>&1)" || {
+  echo "FAIL [case11]: plugins-update failed" >&2
+  echo "$case11_update_out" >&2
+  exit 1
+}
+[ -r "$WORKDIR/case11/ws/.devrail.lock" ] || {
+  echo "FAIL [case11]: .devrail.lock not written by plugins-update" >&2
+  exit 1
+}
+
+# Step 2: run _extended-image — should resolve, load, and build using the
+# cache populated in step 1.
+run_extended_image "$WORKDIR/case11/ws"
+assert_eq "0" "$RUN_EXIT" "case11 end-to-end exit code"
+echo "$RUN_OUT" | grep -qE "extended image (built|cache hit)" || {
+  echo "FAIL [case11]: missing 'extended image built/cache hit' event" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+[ -r "$WORKDIR/case11/ws/.devrail/extended-image-tag" ] || {
+  echo "FAIL [case11]: tag file not written" >&2
+  exit 1
+}
+
+echo "==> All build-pipeline smoke checks passed (11/11)"

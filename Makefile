@@ -27,6 +27,35 @@ DEVRAIL_CONFIG     := .devrail.yml
 # invocations. Story 13.4. Override via env if you keep caches elsewhere.
 DEVRAIL_HOST_PLUGINS_CACHE ?= $(HOME)/.cache/devrail/plugins
 
+# Story 13.4b: when plugins are declared, `make check` etc. build a
+# project-local image (devrail-local:<hash-of-dockerfile.devrail>) and use it
+# for in-container targets. The tag is written to `.devrail/extended-image-tag`
+# by `_extended-image`. DEVRAIL_RESOLVED_IMAGE is recursively-expanded (=) so
+# it re-evaluates each time DOCKER_RUN expands — picking up the tag file once
+# `_extended-image` has run.
+DEVRAIL_RESOLVED_IMAGE = $(if $(and $(wildcard .devrail/extended-image-tag),$(HAS_PLUGINS_DECLARED)),$(shell cat .devrail/extended-image-tag),$(DEVRAIL_IMAGE):$(DEVRAIL_TAG))
+
+# Probe .devrail.yml in a single shell invocation that distinguishes missing
+# file, yq parse error, and valid + plugin-count. Without this, a malformed
+# `.devrail.yml` would silently fall through as "no plugins" and skip the
+# extended-image build (review finding H1).
+DEVRAIL_PLUGIN_PROBE := $(shell \
+	if [ ! -r $(DEVRAIL_CONFIG) ]; then \
+		echo "missing"; \
+	elif count=$$(yq -r '.plugins // [] | length' $(DEVRAIL_CONFIG) 2>/dev/null); then \
+		echo "$$count"; \
+	else \
+		echo "error"; \
+	fi)
+
+ifeq ($(DEVRAIL_PLUGIN_PROBE),error)
+$(error .devrail.yml exists but yq failed to parse it — run `yq '.' $(DEVRAIL_CONFIG)` to see the error)
+endif
+
+# HAS_PLUGINS_DECLARED — set when .devrail.yml has a non-empty `plugins:` list.
+# Empty when file is missing or `plugins:` is `[]`/absent.
+HAS_PLUGINS_DECLARED := $(if $(filter-out missing 0,$(DEVRAIL_PLUGIN_PROBE)),yes,)
+
 # Read project-specific env vars from .devrail.yml `env:` section and inject
 # them as `-e KEY=VALUE` into DOCKER_RUN. Empty/missing section is a no-op.
 DEVRAIL_ENV_FLAGS := $(shell yq -r '.env // {} | to_entries | .[] | "-e " + .key + "=" + .value' $(DEVRAIL_CONFIG) 2>/dev/null)
@@ -69,7 +98,7 @@ HAS_KOTLIN     := $(filter kotlin,$(LANGUAGES))
 # project's, and bundler can't find project-installed gems (issue #30 Gap A).
 RUBY_DOCKER_ENV := $(if $(HAS_RUBY),-e BUNDLE_APP_CONFIG=/workspace/.bundle,)
 
-DOCKER_RUN := docker run --rm \
+DOCKER_RUN = docker run --rm \
 	-v "$$(pwd):/workspace" \
 	-v "$(DEVRAIL_HOST_PLUGINS_CACHE):/opt/devrail/plugins" \
 	-w /workspace \
@@ -77,7 +106,7 @@ DOCKER_RUN := docker run --rm \
 	-e DEVRAIL_LOG_FORMAT=$(DEVRAIL_LOG_FORMAT) \
 	$(DEVRAIL_ENV_FLAGS) \
 	$(RUBY_DOCKER_ENV) \
-	$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)
+	$(DEVRAIL_RESOLVED_IMAGE)
 
 .DEFAULT_GOAL := help
 
@@ -85,7 +114,7 @@ DOCKER_RUN := docker run --rm \
 # .PHONY declarations
 # ---------------------------------------------------------------------------
 .PHONY: help build lint format fix test security scan docs changelog check install-hooks init release plugins-update
-.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify _ensure-host-cache
+.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify _ensure-host-cache _generate-dockerfile _extended-image _devrail-host-bin
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
@@ -99,6 +128,54 @@ DOCKER_RUN := docker run --rm \
 _ensure-host-cache:
 	@mkdir -p "$(DEVRAIL_HOST_PLUGINS_CACHE)"
 
+# --- _devrail-host-bin: extract orchestrator script + libs from container ---
+# Story 13.4b/H2: consumer template repos inherit this Makefile but NOT
+# `scripts/`, so the host orchestrator must be sourced from the container.
+# When the dev-toolchain repo itself runs (scripts/ present locally) we use
+# the on-disk copy so changes take effect without a rebuild. Otherwise we
+# extract scripts + lib from the resolved core image to .devrail/host-bin/,
+# cached and invalidated by image tag (.devrail/host-bin/.image-tag).
+_devrail-host-bin:
+	@if [ -f scripts/plugin-extended-image.sh ]; then \
+		exit 0; \
+	fi; \
+	expected="$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)"; \
+	cached=$$(cat .devrail/host-bin/.image-tag 2>/dev/null || true); \
+	if [ "$$cached" = "$$expected" ] && \
+	   [ -f .devrail/host-bin/scripts/plugin-extended-image.sh ] && \
+	   [ -f .devrail/host-bin/lib/log.sh ] && \
+	   [ -f .devrail/host-bin/lib/plugin-cache.sh ]; then \
+		exit 0; \
+	fi; \
+	mkdir -p .devrail/host-bin/scripts .devrail/host-bin/lib; \
+	echo '{"level":"info","msg":"extracting host orchestrator from container","image":"'"$$expected"'","language":"_plugins"}' >&2; \
+	cid=$$(docker create "$$expected" /bin/true) || { \
+		echo '{"level":"error","msg":"docker create failed for host-bin extraction","image":"'"$$expected"'","language":"_plugins"}' >&2; \
+		exit 2; \
+	}; \
+	trap 'docker rm "$$cid" >/dev/null 2>&1 || true' EXIT; \
+	docker cp "$$cid":/opt/devrail/scripts/plugin-extended-image.sh .devrail/host-bin/scripts/plugin-extended-image.sh && \
+	docker cp "$$cid":/opt/devrail/lib/log.sh             .devrail/host-bin/lib/log.sh && \
+	docker cp "$$cid":/opt/devrail/lib/plugin-cache.sh    .devrail/host-bin/lib/plugin-cache.sh && \
+	chmod +x .devrail/host-bin/scripts/plugin-extended-image.sh && \
+	printf '%s\n' "$$expected" > .devrail/host-bin/.image-tag
+
+# --- _extended-image: build the project-local image when plugins declared ---
+# Story 13.4b: HOST-side target. When .devrail.yml declares no plugins, this
+# is a no-op (DOCKER_RUN keeps using the core image). When plugins ARE
+# declared, the orchestrator script generates Dockerfile.devrail, builds
+# devrail-local:<hash>, and writes the tag to .devrail/extended-image-tag
+# so the recursive DOCKER_RUN picks it up. Cache hits are free.
+_extended-image: _ensure-host-cache _devrail-host-bin
+	@if [ -n "$(HAS_PLUGINS_DECLARED)" ]; then \
+		if [ -f scripts/plugin-extended-image.sh ]; then \
+			bash scripts/plugin-extended-image.sh; \
+		else \
+			DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" \
+				bash .devrail/host-bin/scripts/plugin-extended-image.sh; \
+		fi; \
+	fi
+
 help: ## Show this help
 	@echo "DevRail dev-toolchain — container image build and validation"
 	@echo ""
@@ -111,16 +188,16 @@ build: ## Build the container image locally
 changelog: _ensure-host-cache ## Generate CHANGELOG.md from conventional commits
 	$(DOCKER_RUN) make _changelog
 
-check: _ensure-host-cache ## Run all checks (lint, format, test, security, scan, docs)
+check: _ensure-host-cache _extended-image ## Run all checks (lint, format, test, security, scan, docs)
 	$(DOCKER_RUN) make _check
 
 docs: _ensure-host-cache ## Generate documentation
 	$(DOCKER_RUN) make _docs
 
-fix: _ensure-host-cache ## Auto-fix formatting issues in-place
+fix: _ensure-host-cache _extended-image ## Auto-fix formatting issues in-place
 	$(DOCKER_RUN) make _fix
 
-format: _ensure-host-cache ## Run all formatters
+format: _ensure-host-cache _extended-image ## Run all formatters
 	$(DOCKER_RUN) make _format
 
 install-hooks: ## Install pre-commit hooks
@@ -148,7 +225,7 @@ install-hooks: ## Install pre-commit hooks
 init: _ensure-host-cache ## Scaffold config files for declared languages
 	$(DOCKER_RUN) make _init
 
-lint: _ensure-host-cache ## Run all linters
+lint: _ensure-host-cache _extended-image ## Run all linters
 	$(DOCKER_RUN) make _lint
 
 plugins-update: _ensure-host-cache ## Resolve plugin refs and write .devrail.lock
@@ -161,13 +238,13 @@ release: ## Cut a versioned release (usage: make release VERSION=1.6.0)
 	fi
 	@bash scripts/release.sh $(VERSION)
 
-scan: _ensure-host-cache ## Run universal scanners (trivy, gitleaks)
+scan: _ensure-host-cache _extended-image ## Run universal scanners (trivy, gitleaks)
 	$(DOCKER_RUN) make _scan
 
-security: _ensure-host-cache ## Run language-specific security scanners
+security: _ensure-host-cache _extended-image ## Run language-specific security scanners
 	$(DOCKER_RUN) make _security
 
-test: _ensure-host-cache ## Run validation tests
+test: _ensure-host-cache _extended-image ## Run validation tests
 	$(DOCKER_RUN) make _test
 
 # ===========================================================================
@@ -192,6 +269,15 @@ _check-config:
 		echo '{"target":"config","status":"error","error":"missing .devrail.yml","exit_code":2}'; \
 		exit 2; \
 	fi
+
+# --- _generate-dockerfile: emit Dockerfile.devrail ---
+# Story 13.4b: in-container target. Depends on _plugins-load (which populates
+# the loader cache at /tmp/devrail-plugins-loaded.yaml in this container) and
+# then runs the generator from Story 13.4a. Writes Dockerfile.devrail to the
+# workspace root. No-op when no plugins declared.
+.PHONY: _generate-dockerfile
+_generate-dockerfile: _plugins-load
+	@bash /opt/devrail/scripts/plugin-build-extended-image.sh ./Dockerfile.devrail
 
 # --- _plugins-update: resolve plugin refs and write .devrail.lock ---
 # Story 13.3: invoked by `make plugins-update`. Reads `.devrail.yml`,

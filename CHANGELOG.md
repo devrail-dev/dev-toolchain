@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Plugin build pipeline complete (Story 13.4b, Epic 13 / v1.10.x preview):
+  - **`make check` auto-builds a project-local extended image.** When
+    `.devrail.yml` declares one or more `plugins:`, the public host targets
+    (`check`, `lint`, `format`, `fix`, `test`, `security`) now run via
+    `_extended-image` first, which generates `Dockerfile.devrail`, builds
+    `devrail-local:<hash-of-dockerfile>` via BuildKit, and points
+    `DOCKER_RUN` at the new tag. Plugin tools are present alongside core
+    tools in a single container — preserving DevRail's "one container,
+    one make check" guarantee.
+  - **Cache hits are free.** `docker image inspect <tag>` is the
+    cache-detection mechanism — unchanged plugin sets reuse the existing
+    image. End-to-end overhead on a cache hit is ~3-5s (mostly the
+    in-container `_generate-dockerfile` step that re-confirms the cache
+    state); the build-vs-rebuild decision itself is instant.
+  - **Build failures surface structured errors.** Failed `docker build`
+    invocations emit a JSON `error` event with `tag`, `duration_ms`, and
+    the last 20 lines of build output as `stderr_tail`. Lockfile and
+    plugin caches are not touched on failure.
+  - **No-plugins regression-safe.** Projects without `plugins:` in
+    `.devrail.yml` see zero behavior change; `_extended-image` is a no-op
+    and `DOCKER_RUN` continues to use the core image.
+  - New `scripts/plugin-extended-image.sh` (host-side orchestrator) and
+    `_extended-image` / `_generate-dockerfile` Makefile targets.
+  - `DEVRAIL_RESOLVED_IMAGE` Make variable: recursively-expanded so it
+    re-evaluates each invocation, picking up
+    `.devrail/extended-image-tag` once `_extended-image` has run.
+  - `DOCKER_RUN` switched from immediate (`:=`) to recursive (`=`)
+    expansion to support the swap-in.
+
 - Plugin build pipeline foundations (Story 13.4a, Epic 13 / v1.10.x preview):
   - **Host-side persistent plugin cache.** `DEVRAIL_HOST_PLUGINS_CACHE`
     Makefile variable (defaults to `${HOME}/.cache/devrail/plugins`) is

@@ -31,7 +31,7 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | **CI workflow templates** | Stable | GitHub Actions workflows and GitLab CI pipeline shipped in template repos. |
 | **Pre-commit hooks** | Stable | Conventional commit hook and per-language hooks configured in template repos. |
 | **Documentation site** | Stable | [devrail.dev](https://devrail.dev) is live with full standards coverage. |
-| **Plugin loader + resolver + lockfile** | Preview (v1.10.x) | Validates `plugin.devrail.yml` manifests, resolves `rev:` to immutable SHAs via `make plugins-update`, records reproducibility metadata in `.devrail.lock`. Verifies lockfile + content_hash on every `make check`. No-op when `plugins:` is absent — v1.9.x behaviour unchanged. Execution loop ships in Story 13.5. |
+| **Plugin loader + resolver + lockfile + build pipeline** | Preview (v1.10.x) | Validates `plugin.devrail.yml` manifests, resolves `rev:` to immutable SHAs (`make plugins-update`), records reproducibility metadata in `.devrail.lock`, and auto-builds a project-local extended image (`devrail-local:<hash>`) when plugins are declared. Verifies lockfile + content_hash on every `make check`. No-op when `plugins:` is absent — v1.9.x behaviour unchanged. Plugin command execution (running plugin-defined `targets:`) ships in Story 13.5. |
 
 ## Consumer responsibilities
 
@@ -39,6 +39,7 @@ These are services/data the dev-toolchain container does **not** provide; consum
 
 - **Database service** (Postgres, MySQL, etc.) — required for Rails projects whose specs touch the test database. The container runs `bundle exec rails db:test:prepare` before `rspec` (when `config/application.rb` + `Gemfile` are present), which needs a reachable database. Typical local pattern: `docker-compose up -d postgres` before `make test`. Typical CI pattern: a `services:` block.
 - **Project bundle install** — the container ships its own gems for `rubocop`/`reek`/etc. as defaults, but for Gemfile-pinned versions it expects the project's bundle to already be installed (`bundle install`) so `bundle exec <tool>` can find them.
+- **Host tooling for plugin builds** — when `.devrail.yml` declares `plugins:`, the host running `make check` must have Docker (with `buildx`), `yq` (v4+), `sha256sum` (coreutils), and `flock` (util-linux) available. No-op when `plugins:` is absent.
 
 ## Versioning
 
