@@ -22,6 +22,11 @@ DEVRAIL_FAIL_FAST  ?= 0
 DEVRAIL_LOG_FORMAT ?= json
 DEVRAIL_CONFIG     := .devrail.yml
 
+# Host-side persistent plugin cache. Bind-mounted into every DOCKER_RUN so
+# plugin manifests fetched by `make plugins-update` survive across container
+# invocations. Story 13.4. Override via env if you keep caches elsewhere.
+DEVRAIL_HOST_PLUGINS_CACHE ?= $(HOME)/.cache/devrail/plugins
+
 # Read project-specific env vars from .devrail.yml `env:` section and inject
 # them as `-e KEY=VALUE` into DOCKER_RUN. Empty/missing section is a no-op.
 DEVRAIL_ENV_FLAGS := $(shell yq -r '.env // {} | to_entries | .[] | "-e " + .key + "=" + .value' $(DEVRAIL_CONFIG) 2>/dev/null)
@@ -66,6 +71,7 @@ RUBY_DOCKER_ENV := $(if $(HAS_RUBY),-e BUNDLE_APP_CONFIG=/workspace/.bundle,)
 
 DOCKER_RUN := docker run --rm \
 	-v "$$(pwd):/workspace" \
+	-v "$(DEVRAIL_HOST_PLUGINS_CACHE):/opt/devrail/plugins" \
 	-w /workspace \
 	-e DEVRAIL_FAIL_FAST=$(DEVRAIL_FAIL_FAST) \
 	-e DEVRAIL_LOG_FORMAT=$(DEVRAIL_LOG_FORMAT) \
@@ -79,11 +85,19 @@ DOCKER_RUN := docker run --rm \
 # .PHONY declarations
 # ---------------------------------------------------------------------------
 .PHONY: help build lint format fix test security scan docs changelog check install-hooks init release plugins-update
-.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify
+.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify _ensure-host-cache
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
 # ===========================================================================
+
+# --- _ensure-host-cache: create the host-side plugin cache dir ---
+# Bind-mounted into every DOCKER_RUN; `docker run -v` would create it as root
+# if it doesn't exist (with surprising perms), so create it host-side first
+# with the user's umask. Idempotent. Story 13.4.
+.PHONY: _ensure-host-cache
+_ensure-host-cache:
+	@mkdir -p "$(DEVRAIL_HOST_PLUGINS_CACHE)"
 
 help: ## Show this help
 	@echo "DevRail dev-toolchain — container image build and validation"
@@ -94,19 +108,19 @@ help: ## Show this help
 build: ## Build the container image locally
 	docker build -t $(DEVRAIL_IMAGE):$(DEVRAIL_TAG) .
 
-changelog: ## Generate CHANGELOG.md from conventional commits
+changelog: _ensure-host-cache ## Generate CHANGELOG.md from conventional commits
 	$(DOCKER_RUN) make _changelog
 
-check: ## Run all checks (lint, format, test, security, scan, docs)
+check: _ensure-host-cache ## Run all checks (lint, format, test, security, scan, docs)
 	$(DOCKER_RUN) make _check
 
-docs: ## Generate documentation
+docs: _ensure-host-cache ## Generate documentation
 	$(DOCKER_RUN) make _docs
 
-fix: ## Auto-fix formatting issues in-place
+fix: _ensure-host-cache ## Auto-fix formatting issues in-place
 	$(DOCKER_RUN) make _fix
 
-format: ## Run all formatters
+format: _ensure-host-cache ## Run all formatters
 	$(DOCKER_RUN) make _format
 
 install-hooks: ## Install pre-commit hooks
@@ -131,13 +145,13 @@ install-hooks: ## Install pre-commit hooks
 	@pre-commit install --hook-type pre-push
 	@echo "Pre-commit hooks installed successfully. Hooks will run on commit and push."
 
-init: ## Scaffold config files for declared languages
+init: _ensure-host-cache ## Scaffold config files for declared languages
 	$(DOCKER_RUN) make _init
 
-lint: ## Run all linters
+lint: _ensure-host-cache ## Run all linters
 	$(DOCKER_RUN) make _lint
 
-plugins-update: ## Resolve plugin refs and write .devrail.lock
+plugins-update: _ensure-host-cache ## Resolve plugin refs and write .devrail.lock
 	$(DOCKER_RUN) make _plugins-update
 
 release: ## Cut a versioned release (usage: make release VERSION=1.6.0)
@@ -147,13 +161,13 @@ release: ## Cut a versioned release (usage: make release VERSION=1.6.0)
 	fi
 	@bash scripts/release.sh $(VERSION)
 
-scan: ## Run universal scanners (trivy, gitleaks)
+scan: _ensure-host-cache ## Run universal scanners (trivy, gitleaks)
 	$(DOCKER_RUN) make _scan
 
-security: ## Run language-specific security scanners
+security: _ensure-host-cache ## Run language-specific security scanners
 	$(DOCKER_RUN) make _security
 
-test: ## Run validation tests
+test: _ensure-host-cache ## Run validation tests
 	$(DOCKER_RUN) make _test
 
 # ===========================================================================
