@@ -32,3 +32,8 @@ build/
 
 # DevRail generated output
 .devrail-output/
+
+# DevRail extended-image build pipeline (Story 13.4b)
+.devrail/
+.devrail-plugins-build/
+Dockerfile.devrail

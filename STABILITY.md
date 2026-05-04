@@ -39,6 +39,7 @@ These are services/data the dev-toolchain container does **not** provide; consum
 
 - **Database service** (Postgres, MySQL, etc.) — required for Rails projects whose specs touch the test database. The container runs `bundle exec rails db:test:prepare` before `rspec` (when `config/application.rb` + `Gemfile` are present), which needs a reachable database. Typical local pattern: `docker-compose up -d postgres` before `make test`. Typical CI pattern: a `services:` block.
 - **Project bundle install** — the container ships its own gems for `rubocop`/`reek`/etc. as defaults, but for Gemfile-pinned versions it expects the project's bundle to already be installed (`bundle install`) so `bundle exec <tool>` can find them.
+- **Host tooling for plugin builds** — when `.devrail.yml` declares `plugins:`, the host running `make check` must have Docker (with `buildx`), `yq` (v4+), `sha256sum` (coreutils), and `flock` (util-linux) available. No-op when `plugins:` is absent.
 
 ## Versioning
 
