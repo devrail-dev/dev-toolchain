@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.5] - 2026-05-05
+
 ### Added
 
 - Plugin execution loop and JSON aggregation (Story 13.5, Epic 13 / v1.10.x preview):
