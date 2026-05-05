@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Kotlin reference plugin extraction (Story 13.7).** The first language
+  ecosystem has been extracted out of dev-toolchain core into a standalone
+  plugin repo: [`github.com/devrail-dev/devrail-plugin-kotlin`](https://github.com/devrail-dev/devrail-plugin-kotlin)
+  v1.0.0. Consumers can declare it via `plugins:` in their `.devrail.yml`
+  to use Kotlin tooling through the v1.10 plugin model instead of the
+  in-core path. Tools shipped: ktlint 1.5.0, detekt 1.23.7, Gradle 8.12,
+  JDK 21 (Eclipse Temurin) — same versions and behaviour as the in-core
+  HAS_KOTLIN blocks.
+- **Extraction is additive in v1.11.x.** Kotlin remains in dev-toolchain
+  core. Existing consumers with `languages: [kotlin]` see ZERO
+  behavioural change — the loader's "core wins over plugin" precedence
+  rule keeps them on the in-core path. v2.0.0 (Story 13.9) removes the
+  in-core path; until then, the plugin is available alongside.
+- **Extraction recipe documented at**
+  [`devrail-standards/standards/contributing.md` § "Extracting a core language as a plugin"](https://github.com/devrail-dev/devrail-standards/blob/main/standards/contributing.md#extracting-a-core-language-as-a-plugin)
+  — step-by-step guide for surface inventory, Makefile-block →
+  manifest-target mapping, install-script porting (no lib/log.sh deps),
+  container-fragment construction, file:// URL validation, and tag/
+  announce. Kotlin extraction is the canonical example.
+- **New regression smoke: `tests/test-kotlin-plugin-extraction.sh`.**
+  Validates the plugin manifest against schema_version 1, resolves it
+  via file:// URL from a vendored fixture, loads it into the dispatcher
+  cache, and asserts target / gate shape parity with the in-core
+  HAS_KOTLIN blocks (including the `ktlint && detekt-cli` chaining
+  preserves both tools). Hermetic — no network access at test time.
+  Wired into CI as Phase 2h.
+- **Vendored plugin fixture**: `tests/fixtures/kotlin-via-plugin/`
+  pinned to `devrail-plugin-kotlin` v1.0.0. Refresh procedure documented
+  in the fixture's README.
+
 ## [1.10.6] - 2026-05-05
 
 ### Other

@@ -94,6 +94,20 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Phase 2h: Kotlin reference plugin extraction smoke test (Story 13.7)
+      # Validates the kotlin reference plugin's manifest against the
+      # validator, resolves it via file:// URL from the vendored fixture,
+      # loads it into the plugin cache, and asserts target/gate parity
+      # with the in-core HAS_KOTLIN behaviour. Does NOT exercise the full
+      # docker-build of devrail-local:<hash> with real ktlint/detekt/gradle
+      # downloads — that's a maintainer-run manual check (see fixture
+      # README).
+      - name: Kotlin plugin extraction smoke test
+        run: bash tests/test-kotlin-plugin-extraction.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 3: Security scans
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.
