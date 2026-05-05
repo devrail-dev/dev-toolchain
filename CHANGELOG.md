@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.6] - 2026-05-05
+
 ### Other
 
 - **v1.10 Plugin Architecture marketing release (Story 13.6).** The v1.10
