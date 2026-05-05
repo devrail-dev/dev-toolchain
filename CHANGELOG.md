@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Plugin execution loop and JSON aggregation (Story 13.5, Epic 13 / v1.10.x preview):
+  - **`_lint` / `_format` / `_fix` / `_test` / `_security` now dispatch each loaded plugin's matching target after the core `HAS_<LANG>` blocks.** The new `lib/plugin-execute.sh` library exposes `dispatch_plugin_target` (per-recipe), `evaluate_gate`, `render_cmd`, and `apply_override`. Plugin results enter the existing `ran_languages` / `failed_languages` arrays and the same JSON envelope — consumers cannot distinguish plugin vs core results from the JSON shape.
+  - **Per-target gate evaluation.** When a plugin manifest declares `gates: { <target>: [path, ...] }`, the dispatcher only runs the target when every gate path exists (file, directory, or glob match). Absolute paths are rejected. Skips emit a structured `plugin gate skipped` event.
+  - **`{paths}` interpolation.** When a target's `cmd` references `{paths}`, the value of `${<paths_var>}` (filtered to existing paths) is substituted, mirroring how `RUBY_PATHS` is filtered in the core Ruby block. Falls back to `paths_default` when the env var is unset.
+  - **Per-language overrides for plugin languages.** `.devrail.yml` entries like `elixir: { linter: dialyxir }` replace the manifest's default `targets.<name>.cmd` for that target. Override key map: `lint` → `linter`, `format_check` / `format_fix` → `formatter`, `fix` → `fixer`, `test` → `test`, `security` → `security`.
+  - **`DEVRAIL_FAIL_FAST=1` parity.** A plugin failure under fail-fast short-circuits the dispatcher and the recipe — no later plugins run.
+  - **No-op when `plugins:` is absent.** `_plugins-load` writes an empty cache; the dispatcher exits immediately. v1.9.x consumers see byte-identical JSON output and no behavioural change.
+  - **`SHELL := /bin/bash`** — the Makefile now pins recipes to bash so `lib/plugin-execute.sh` (uses `[[`, `((`, indirect parameter expansion) can be sourced directly. Existing POSIX-sh recipes remain valid.
+  - Smoke test: `tests/test-plugin-execution.sh` exercises 10 cases (no-op, pass, fail, gate skip / run, paths interpolation, override, fail-fast, partial targets, JSON regression).
+
 ## [1.10.4] - 2026-05-04
 
 ### Added

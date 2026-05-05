@@ -14,7 +14,7 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | Component | Status | Notes |
 |---|---|---|
 | **Container image** | Stable | Multi-arch (amd64 + arm64), signed with cosign, weekly rebuilds. |
-| **Makefile contract** | Stable | Two-layer delegation pattern, JSON summary output, `init` scaffolding. |
+| **Makefile contract** | Stable | Two-layer delegation pattern, JSON summary output, `init` scaffolding. As of v1.10.x the reference Makefile pins `SHELL := /bin/bash` so plugin libraries can be sourced directly into recipes; consumer template repos that inherit this Makefile require `bash` on the host (already the default on Debian/Ubuntu/macOS — only relevant for busybox/Alpine without bash). |
 | **Shell conventions** | Stable | `lib/log.sh`, `lib/platform.sh`, header format, and idempotency patterns are settled. |
 | **Conventional commits** | Stable | Types, scopes, and format are finalized. Pre-commit hook published. |
 | **Language standards** | Stable | Python, Bash, Terraform, Ansible, Ruby, Go, JavaScript/TypeScript, Rust — all 8 ecosystems shipped. |
@@ -31,7 +31,7 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | **CI workflow templates** | Stable | GitHub Actions workflows and GitLab CI pipeline shipped in template repos. |
 | **Pre-commit hooks** | Stable | Conventional commit hook and per-language hooks configured in template repos. |
 | **Documentation site** | Stable | [devrail.dev](https://devrail.dev) is live with full standards coverage. |
-| **Plugin loader + resolver + lockfile + build pipeline** | Preview (v1.10.x) | Validates `plugin.devrail.yml` manifests, resolves `rev:` to immutable SHAs (`make plugins-update`), records reproducibility metadata in `.devrail.lock`, and auto-builds a project-local extended image (`devrail-local:<hash>`) when plugins are declared. Verifies lockfile + content_hash on every `make check`. No-op when `plugins:` is absent — v1.9.x behaviour unchanged. Plugin command execution (running plugin-defined `targets:`) ships in Story 13.5. |
+| **Plugin loader + resolver + lockfile + build pipeline + execution loop** | Preview (v1.10.x) | Validates `plugin.devrail.yml` manifests, resolves `rev:` to immutable SHAs (`make plugins-update`), records reproducibility metadata in `.devrail.lock`, and auto-builds a project-local extended image (`devrail-local:<hash>`) when plugins are declared. Each loaded plugin's `targets` are dispatched inside `_lint`/`_format`/`_fix`/`_test`/`_security` with gate evaluation, `{paths}` interpolation, per-language overrides, and JSON aggregation into the existing event shape. `DEVRAIL_FAIL_FAST=1` short-circuits on plugin failures the same as core. No-op when `plugins:` is absent — v1.9.x behaviour unchanged. |
 
 ## Consumer responsibilities
 
