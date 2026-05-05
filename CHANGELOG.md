@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Other
+
+- **v1.10 Plugin Architecture marketing release (Story 13.6).** The v1.10
+  series is now feature-complete and publicly documented. No new code
+  ships in v1.10.6 — this patch carries the public-facing docs and the
+  release announcement that frame v1.10 as the stable plugin-architecture
+  baseline. Plugin authors can target `devrail_min_version: 1.10.0` with
+  confidence; consumers can adopt the model on the floating `:v1` tag.
+  - Cumulative across 13.2 – 13.5: plugin manifest parser + loader
+    (v1.10.0/.1), resolver + lockfile (v1.10.2), extended-image build
+    pipeline (v1.10.3/.4), and execution loop with JSON aggregation
+    (v1.10.5).
+  - New OrgDocs/devrail-standards docs:
+    [`standards/contributing.md` § Contributing a Plugin](https://github.com/devrail-dev/devrail-standards/blob/main/standards/contributing.md#contributing-a-plugin)
+    and the `plugins:` schema section in
+    [`standards/devrail-yml-schema.md`](https://github.com/devrail-dev/devrail-standards/blob/main/standards/devrail-yml-schema.md).
+  - New [devrail.dev guide](https://devrail.dev/docs/contributing/adding-a-plugin/)
+    and [release blog post](https://devrail.dev/blog/2026-05-05-plugin-architecture/).
+  - Story 13.7 (next minor, v1.11.0) extracts Kotlin as the reference
+    plugin and documents the extraction recipe so other languages can
+    follow.
+
 ## [1.10.5] - 2026-05-05
 
 ### Added
