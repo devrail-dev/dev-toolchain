@@ -16,6 +16,11 @@
 # ---------------------------------------------------------------------------
 # Variables (overridable via environment)
 # ---------------------------------------------------------------------------
+# Use bash for all recipes so we can source bash-only libs (plugin-execute.sh
+# uses [[, ((, and indirect parameter expansion). Existing POSIX-sh recipes
+# remain valid because bash is a superset.
+SHELL              := /bin/bash
+
 DEVRAIL_IMAGE      ?= ghcr.io/devrail-dev/dev-toolchain
 DEVRAIL_TAG        ?= local
 DEVRAIL_FAIL_FAST  ?= 0
@@ -365,8 +370,15 @@ _plugins-load: _plugins-verify
 	if [ "$$failed" -gt 0 ]; then exit 2; fi
 
 # --- _lint: language-specific linting ---
+# After the core HAS_<LANG> blocks, plugin targets (Story 13.5) are dispatched
+# via lib/plugin-execute.sh. The dispatcher updates overall_exit /
+# ran_languages / failed_languages in this recipe's shell scope, so plugin
+# results aggregate into the same JSON envelope as core results. The
+# DEVRAIL_FAIL_FAST short-circuit pattern is mirrored after the dispatch
+# call to keep behaviour symmetric with the per-language blocks.
 _lint: _plugins-load
-	@start_time=$$(date +%s%3N); \
+	@. /opt/devrail/lib/plugin-execute.sh; \
+	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
@@ -572,6 +584,13 @@ _lint: _plugins-load
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	dispatch_plugin_target lint; \
+	if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+		end_time=$$(date +%s%3N); \
+		duration=$$((end_time - start_time)); \
+		echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+		exit $$overall_exit; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -583,7 +602,8 @@ _lint: _plugins-load
 
 # --- _format: language-specific format checking ---
 _format: _plugins-load
-	@start_time=$$(date +%s%3N); \
+	@. /opt/devrail/lib/plugin-execute.sh; \
+	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
@@ -722,6 +742,13 @@ _format: _plugins-load
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	dispatch_plugin_target format_check; \
+	if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+		end_time=$$(date +%s%3N); \
+		duration=$$((end_time - start_time)); \
+		echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+		exit $$overall_exit; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -733,7 +760,8 @@ _format: _plugins-load
 
 # --- _fix: language-specific format fixing (in-place) ---
 _fix: _plugins-load
-	@start_time=$$(date +%s%3N); \
+	@. /opt/devrail/lib/plugin-execute.sh; \
+	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
@@ -872,6 +900,13 @@ _fix: _plugins-load
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	dispatch_plugin_target format_fix; \
+	if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+		end_time=$$(date +%s%3N); \
+		duration=$$((end_time - start_time)); \
+		echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+		exit $$overall_exit; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ $$overall_exit -eq 0 ]; then \
@@ -883,7 +918,8 @@ _fix: _plugins-load
 
 # --- _test: language-specific test runners ---
 _test: _plugins-load
-	@start_time=$$(date +%s%3N); \
+	@. /opt/devrail/lib/plugin-execute.sh; \
+	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
@@ -1051,6 +1087,13 @@ _test: _plugins-load
 			exit $$overall_exit; \
 		fi; \
 	fi; \
+	dispatch_plugin_target test; \
+	if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+		end_time=$$(date +%s%3N); \
+		duration=$$((end_time - start_time)); \
+		echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+		exit $$overall_exit; \
+	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \
 	if [ -z "$${ran_languages}" ] && [ -n "$${skipped_languages}" ]; then \
@@ -1064,7 +1107,8 @@ _test: _plugins-load
 
 # --- _security: language-specific security scanners ---
 _security: _plugins-load
-	@start_time=$$(date +%s%3N); \
+	@. /opt/devrail/lib/plugin-execute.sh; \
+	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
@@ -1210,6 +1254,13 @@ _security: _plugins-load
 			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
 			exit $$overall_exit; \
 		fi; \
+	fi; \
+	dispatch_plugin_target security; \
+	if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+		end_time=$$(date +%s%3N); \
+		duration=$$((end_time - start_time)); \
+		echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+		exit $$overall_exit; \
 	fi; \
 	end_time=$$(date +%s%3N); \
 	duration=$$((end_time - start_time)); \

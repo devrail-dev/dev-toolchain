@@ -83,6 +83,17 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Phase 2g: Plugin execution smoke test (Story 13.5)
+      # Drives lib/plugin-execute.sh against hand-crafted loader-cache
+      # fixtures: dispatcher no-op, pass / fail, gate skip / run, paths
+      # interpolation, per-language override, DEVRAIL_FAIL_FAST short-circuit,
+      # partial targets, and JSON-shape regression.
+      - name: Plugin execution smoke test
+        run: bash tests/test-plugin-execution.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 3: Security scans
       # Blocking scan: OS packages only. We control the base image and can act on
       # these. ignore-unfixed skips CVEs with no Debian patch available yet.
