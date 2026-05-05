@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 # tests/test-plugin-execution.sh — Validate the plugin execution loop (Story 13.5)
 #
-# 10 cases covering AC10:
+# 15 cases covering AC10 and Story 13.5 review fixes (H1, M1, M2, M6, L2-L5):
 #   1. No plugins → dispatcher is a no-op (no events, no aggregation)
 #   2. Single plugin, lint passes → entry in ran_languages, exit 0
 #   3. Single plugin, lint fails → entry in failed_languages, overall_exit=1
-#   4. Gate skip (gate path absent) → no execution, 'gate skipped' event
+#   4. Gate skip (gate path absent) → no execution, 'gate skipped' event,
+#      plugin recorded in skipped_languages (review L5)
 #   5. Gate run (gate path present) → executes normally
 #   6. {paths} interpolation with paths_var (filtered to existing paths)
 #   7. Per-language override replaces manifest default cmd
 #   8. DEVRAIL_FAIL_FAST=1 short-circuits on first plugin failure
-#   9. Manifest has 'lint' but no 'test' target → _test invocation skips silently
+#   9. Manifest has 'lint' but no 'test' target → _test fully silent
+#      (no events at all — review L3)
 #  10. JSON regression: zero-plugin run produces byte-identical event shape
+#  11. Absolute-path gate → config error → plugin failure (review M1)
+#  12. {paths} cmd without paths_var → config error → dispatcher continues
+#      (review H1: helpers MUST NOT exit; recipe envelope still emits)
+#  13. Path with shell-meta chars filtered before `bash -c` (review M6)
+#  14. Triple-sourced lib remains a no-op (review L2: idempotency guard)
+#  15. Malformed loader cache → structured error + plugin-system failure
+#      (review M2: yq parse errors no longer silently swallowed)
 #
 # Usage: bash tests/test-plugin-execution.sh
 # Env:
@@ -72,8 +81,9 @@ run_dispatch_in_container() {
       overall_exit=0
       ran_languages=""
       failed_languages=""
+      skipped_languages=""
       dispatch_plugin_target "'"$target"'"
-      echo "DISPATCH_RESULT overall_exit=$overall_exit ran_languages=${ran_languages%,} failed_languages=${failed_languages%,}"
+      echo "DISPATCH_RESULT overall_exit=$overall_exit ran_languages=${ran_languages%,} failed_languages=${failed_languages%,} skipped_languages=${skipped_languages%,}"
       exit $overall_exit
     ' 2>&1)" || RUN_EXIT=$?
 }
@@ -89,8 +99,8 @@ languages: [bash]
 YAML
 run_dispatch_in_container "$WORKDIR/case1" "lint"
 assert_eq "0" "$RUN_EXIT" "case1 exit code"
-echo "$RUN_OUT" | grep -q "DISPATCH_RESULT overall_exit=0 ran_languages= failed_languages=" || {
-  echo "FAIL [case1]: expected empty ran/failed_languages, got:" >&2
+echo "$RUN_OUT" | grep -q "DISPATCH_RESULT overall_exit=0 ran_languages= failed_languages= skipped_languages=$" || {
+  echo "FAIL [case1]: expected all-empty result, got:" >&2
   echo "$RUN_OUT" >&2
   exit 1
 }
@@ -119,7 +129,7 @@ languages: [elixir]
 YAML
 run_dispatch_in_container "$WORKDIR/case2" "lint"
 assert_eq "0" "$RUN_EXIT" "case2 exit code"
-echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages="elixir" failed_languages=$' || {
+echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages="elixir" failed_languages= skipped_languages=$' || {
   echo "FAIL [case2]: expected ran_languages=\"elixir\", got:" >&2
   echo "$RUN_OUT" >&2
   exit 1
@@ -146,7 +156,7 @@ languages: [elixir]
 YAML
 run_dispatch_in_container "$WORKDIR/case3" "lint"
 assert_eq "1" "$RUN_EXIT" "case3 exit code"
-echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=1 ran_languages="elixir" failed_languages="elixir"$' || {
+echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=1 ran_languages="elixir" failed_languages="elixir" skipped_languages=$' || {
   echo "FAIL [case3]: expected failed_languages=\"elixir\", got:" >&2
   echo "$RUN_OUT" >&2
   exit 1
@@ -174,8 +184,10 @@ languages: [elixir]
 YAML
 run_dispatch_in_container "$WORKDIR/case4" "lint"
 assert_eq "0" "$RUN_EXIT" "case4 exit code"
-echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages= failed_languages=$' || {
-  echo "FAIL [case4]: gate skip should leave ran/failed empty, got:" >&2
+# Review L5: gate-skipped plugins now flow into skipped_languages so _test
+# and _security recipes that maintain that array stay consistent.
+echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages= failed_languages= skipped_languages="elixir"$' || {
+  echo "FAIL [case4]: gate skip should record plugin in skipped_languages, got:" >&2
   echo "$RUN_OUT" >&2
   exit 1
 }
@@ -203,7 +215,7 @@ languages: [elixir]
 YAML
 run_dispatch_in_container "$WORKDIR/case5" "lint"
 assert_eq "0" "$RUN_EXIT" "case5 exit code"
-echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages="elixir" failed_languages=$' || {
+echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages="elixir" failed_languages= skipped_languages=$' || {
   echo "FAIL [case5]: gate-passed lint should record ran_languages, got:" >&2
   echo "$RUN_OUT" >&2
   exit 1
@@ -327,14 +339,16 @@ languages: [elixir]
 YAML
 run_dispatch_in_container "$WORKDIR/case9" "test"
 assert_eq "0" "$RUN_EXIT" "case9 exit code (no 'test' target)"
-echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages= failed_languages=$' || {
-  echo "FAIL [case9]: silent skip should leave ran/failed empty, got:" >&2
+echo "$RUN_OUT" | grep -q 'DISPATCH_RESULT overall_exit=0 ran_languages= failed_languages= skipped_languages=$' || {
+  echo "FAIL [case9]: silent skip should leave ran/failed/skipped empty, got:" >&2
   echo "$RUN_OUT" >&2
   exit 1
 }
-# No plugin events for the test target
-if echo "$RUN_OUT" | grep -q "plugin target executing"; then
-  echo "FAIL [case9]: should not emit 'executing' event when target absent" >&2
+# Review L3: plugin-target absent should be GENUINELY silent — no plugin
+# event of any kind for this target dispatch.
+if echo "$RUN_OUT" | grep -qE 'plugin target (executing|passed|failed)|plugin gate (skipped|path)'; then
+  echo "FAIL [case9]: dispatcher should be fully silent when plugin doesn't expose the target" >&2
+  echo "$RUN_OUT" >&2
   exit 1
 fi
 
@@ -372,4 +386,182 @@ expected_shape='{"target":"lint","status":"pass","duration_ms":0,"languages":[]}
 got_line="$(echo "$case10_out" | grep -E '^\{.*"target":"lint"' | tail -1)"
 assert_eq "$expected_shape" "$got_line" "case10 JSON shape regression"
 
-echo "==> All plugin-execution checks passed (10/10)"
+# --- Case 11: absolute-path gate → config error, plugin failure ---
+# Review M1: previous revision returned 1 (silent skip) for both
+# gate-skip AND absolute-path config error. New contract: 2 = config
+# error → plugin failure entry, not silent skip.
+echo "==> Case 11: absolute-path gate rejected as config error"
+mkdir -p "$WORKDIR/case11"
+cat >"$WORKDIR/case11/cache.yaml" <<'YAML'
+plugins:
+  - name: elixir
+    rev: v1.0.0
+    source: github.com/community/devrail-plugin-elixir
+    schema_version: 1
+    targets:
+      lint:
+        cmd: "true"
+    gates:
+      lint: ["/etc/passwd"]
+YAML
+cat >"$WORKDIR/case11/.devrail.yml" <<'YAML'
+languages: [elixir]
+YAML
+run_dispatch_in_container "$WORKDIR/case11" "lint"
+assert_eq "1" "$RUN_EXIT" "case11 exit code (gate config error → plugin failure)"
+echo "$RUN_OUT" | grep -q 'failed_languages="elixir:gate-config"' || {
+  echo "FAIL [case11]: gate config error must surface in failed_languages, got:" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+echo "$RUN_OUT" >"$WORKDIR/case11.log"
+assert_jq "$WORKDIR/case11.log" 'select(.level=="error" and .msg=="plugin gate path must be workspace-relative" and .plugin=="elixir")' "case11 absolute-path error event"
+
+# --- Case 12: {paths} cmd without paths_var → config error, plugin failure ---
+# Review H1: previous revision called `exit 2` from the sourced lib,
+# killing the recipe before its JSON envelope was emitted. New contract:
+# render_cmd returns 2; dispatcher catches and continues (recipe still
+# emits the final JSON event).
+echo "==> Case 12: {paths} without paths_var → config error, dispatcher does not exit"
+mkdir -p "$WORKDIR/case12"
+cat >"$WORKDIR/case12/cache.yaml" <<'YAML'
+plugins:
+  - name: alpha
+    rev: v1.0.0
+    source: github.com/test/alpha
+    schema_version: 1
+    targets:
+      lint:
+        cmd: "echo {paths}"
+  - name: beta
+    rev: v1.0.0
+    source: github.com/test/beta
+    schema_version: 1
+    targets:
+      lint:
+        cmd: "true"
+YAML
+cat >"$WORKDIR/case12/.devrail.yml" <<'YAML'
+languages: [alpha, beta]
+YAML
+run_dispatch_in_container "$WORKDIR/case12" "lint"
+assert_eq "1" "$RUN_EXIT" "case12 exit code (cmd config error → plugin failure)"
+echo "$RUN_OUT" | grep -q 'failed_languages="alpha:cmd-config"' || {
+  echo "FAIL [case12]: cmd config error must surface in failed_languages, got:" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+# Crucially, the SECOND plugin must still run (dispatcher returned, did
+# NOT exit). Without H1's fix, the lib's `exit 2` would have killed the
+# whole recipe before beta could be reached.
+echo "$RUN_OUT" | grep -q 'ran_languages="beta"' || {
+  echo "FAIL [case12]: second plugin must still execute after first plugin's config error, got:" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+
+# --- Case 13: path containing shell-meta chars → rejected, no injection ---
+# Review M6: a path like `lib;evil` (if it existed) would inject through
+# `bash -c "${final_cmd}"`. The filter rejects shell-meta characters.
+echo "==> Case 13: path with shell-meta chars rejected before bash -c"
+mkdir -p "$WORKDIR/case13/lib" "$WORKDIR/case13/lib;evil"
+cat >"$WORKDIR/case13/cache.yaml" <<'YAML'
+plugins:
+  - name: elixir
+    rev: v1.0.0
+    source: github.com/community/devrail-plugin-elixir
+    schema_version: 1
+    targets:
+      lint:
+        cmd: "echo PATHS={paths} > /workspace/result.txt"
+        paths_var: ELIXIR_PATHS
+        paths_default: "lib"
+YAML
+cat >"$WORKDIR/case13/.devrail.yml" <<'YAML'
+languages: [elixir]
+YAML
+RUN_EXIT=0
+RUN_OUT="$(docker run --rm \
+  -v "$WORKDIR/case13:/workspace" \
+  -v "$REPO_ROOT/lib:/opt/devrail/lib:ro" \
+  -e DEVRAIL_PLUGINS_CACHE=/workspace/cache.yaml \
+  -e DEVRAIL_LOG_FORMAT=json \
+  -e DEVRAIL_CONFIG=/workspace/.devrail.yml \
+  -e ELIXIR_PATHS="lib lib;evil" \
+  -w /workspace \
+  "$IMAGE" \
+  bash -c '
+    set +e
+    . /opt/devrail/lib/plugin-execute.sh
+    overall_exit=0; ran_languages=""; failed_languages=""; skipped_languages=""
+    dispatch_plugin_target lint
+    exit $overall_exit
+  ' 2>&1)" || RUN_EXIT=$?
+assert_eq "0" "$RUN_EXIT" "case13 exit code (filter rejects, plugin still runs with safe paths)"
+result="$(cat "$WORKDIR/case13/result.txt" 2>/dev/null || true)"
+# `lib;evil` must have been filtered out — only `lib` survives.
+assert_eq "PATHS=lib" "$result" "case13 shell-meta path filtered before bash -c"
+echo "$RUN_OUT" >"$WORKDIR/case13.log"
+assert_jq "$WORKDIR/case13.log" 'select(.level=="warn" and .msg=="plugin path contains shell-meta characters; skipping" and .path=="lib;evil")' "case13 shell-meta warning event"
+
+# --- Case 14: double-source guard ---
+# Review L2: re-sourcing the lib must be a no-op (idempotent).
+echo "==> Case 14: double-source is idempotent"
+mkdir -p "$WORKDIR/case14"
+cat >"$WORKDIR/case14/cache.yaml" <<'YAML'
+plugins: []
+YAML
+cat >"$WORKDIR/case14/.devrail.yml" <<'YAML'
+languages: [bash]
+YAML
+RUN_EXIT=0
+RUN_OUT="$(docker run --rm \
+  -v "$WORKDIR/case14:/workspace" \
+  -v "$REPO_ROOT/lib:/opt/devrail/lib:ro" \
+  -e DEVRAIL_PLUGINS_CACHE=/workspace/cache.yaml \
+  -e DEVRAIL_LOG_FORMAT=json \
+  -e DEVRAIL_CONFIG=/workspace/.devrail.yml \
+  -w /workspace \
+  "$IMAGE" \
+  bash -c '
+    set +e
+    . /opt/devrail/lib/plugin-execute.sh
+    . /opt/devrail/lib/plugin-execute.sh
+    . /opt/devrail/lib/plugin-execute.sh
+    overall_exit=0; ran_languages=""; failed_languages=""; skipped_languages=""
+    dispatch_plugin_target lint
+    echo "DISPATCH_RESULT overall_exit=$overall_exit ran_languages=${ran_languages%,}"
+    exit $overall_exit
+  ' 2>&1)" || RUN_EXIT=$?
+assert_eq "0" "$RUN_EXIT" "case14 exit code"
+echo "$RUN_OUT" | grep -q "DISPATCH_RESULT overall_exit=0 ran_languages=$" || {
+  echo "FAIL [case14]: triple-sourced dispatcher must remain a no-op, got:" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+
+# --- Case 15: malformed loader cache → recipe failure (M2) ---
+# Review M2: previous revision swallowed cache parse errors via
+# `2>/dev/null`. New contract: loader-cache parse failure surfaces as a
+# recipe-level failure with structured error event.
+echo "==> Case 15: malformed loader cache → structured error + plugin-system failure"
+mkdir -p "$WORKDIR/case15"
+cat >"$WORKDIR/case15/cache.yaml" <<'YAML'
+plugins:
+  - name: broken
+    rev: : not-yaml ][}{
+YAML
+cat >"$WORKDIR/case15/.devrail.yml" <<'YAML'
+languages: [bash]
+YAML
+run_dispatch_in_container "$WORKDIR/case15" "lint"
+assert_eq "1" "$RUN_EXIT" "case15 exit code (cache parse error)"
+echo "$RUN_OUT" | grep -q 'failed_languages="_plugins:cache-parse"' || {
+  echo "FAIL [case15]: cache-parse error must surface in failed_languages, got:" >&2
+  echo "$RUN_OUT" >&2
+  exit 1
+}
+echo "$RUN_OUT" >"$WORKDIR/case15.log"
+assert_jq "$WORKDIR/case15.log" 'select(.level=="error" and .msg=="loader cache could not be parsed by yq")' "case15 cache-parse-error event"
+
+echo "==> All plugin-execution checks passed (15/15)"

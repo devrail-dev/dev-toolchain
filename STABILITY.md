@@ -14,7 +14,7 @@ DevRail has reached **v1.0** across all repositories. The core standards, toolch
 | Component | Status | Notes |
 |---|---|---|
 | **Container image** | Stable | Multi-arch (amd64 + arm64), signed with cosign, weekly rebuilds. |
-| **Makefile contract** | Stable | Two-layer delegation pattern, JSON summary output, `init` scaffolding. |
+| **Makefile contract** | Stable | Two-layer delegation pattern, JSON summary output, `init` scaffolding. As of v1.10.x the reference Makefile pins `SHELL := /bin/bash` so plugin libraries can be sourced directly into recipes; consumer template repos that inherit this Makefile require `bash` on the host (already the default on Debian/Ubuntu/macOS — only relevant for busybox/Alpine without bash). |
 | **Shell conventions** | Stable | `lib/log.sh`, `lib/platform.sh`, header format, and idempotency patterns are settled. |
 | **Conventional commits** | Stable | Types, scopes, and format are finalized. Pre-commit hook published. |
 | **Language standards** | Stable | Python, Bash, Terraform, Ansible, Ruby, Go, JavaScript/TypeScript, Rust — all 8 ecosystems shipped. |

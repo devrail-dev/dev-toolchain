@@ -5,23 +5,37 @@
 #          inside the existing _lint/_format/_fix/_test/_security Makefile
 #          recipes. Reads from the loader cache (Story 13.2) and updates
 #          caller-scope shell variables (overall_exit, ran_languages,
-#          failed_languages) so plugin results aggregate into the same JSON
-#          shape as core languages.
+#          failed_languages, skipped_languages) so plugin results aggregate
+#          into the same JSON shape as core languages.
 #
 # Usage:   source /opt/devrail/lib/plugin-execute.sh
-#          dispatch_plugin_target lint    # or format_check|format_fix|test|security
+#          dispatch_plugin_target lint    # or format_check|format_fix|fix|test|security
 #
 # Contract with Makefile recipes:
 #   - Caller MUST have these shell vars in scope: overall_exit, ran_languages,
-#     failed_languages (the recipe's own accounting variables).
+#     failed_languages (the recipe's own accounting variables). For _test and
+#     _security recipes, skipped_languages is also updated on gate-skip.
 #   - Caller is responsible for the per-block DEVRAIL_FAIL_FAST short-circuit;
 #     dispatch_plugin_target itself stops iterating on first failure when
 #     DEVRAIL_FAIL_FAST=1, and sets overall_exit=1.
 #   - No-op when the loader cache contains no plugins.
+#   - Internal helpers MUST NOT exit; they return non-zero so the dispatcher
+#     can surface failures via the recipe's JSON envelope (review H1).
 #
-# Dependencies: lib/log.sh (log_event), yq (v4+), bash 5+
+# Performance:
+#   The cache and `.devrail.yml` are converted to JSON once at the start of
+#   each dispatch and re-used via jq for all per-plugin / per-target lookups.
+#   Earlier revisions invoked yq ~8N times per recipe (review M3); the
+#   current path is 2 yq calls + ~3N jq calls.
+#
+# Optional env:
+#   DEVRAIL_PLUGIN_TIMEOUT_SECONDS — wraps each plugin cmd in `timeout -k 5 N`
+#       (review M4). Unset = no timeout (default).
+#
+# Dependencies: lib/log.sh (log_event), yq (v4+), jq, bash 5+, coreutils
+#               (timeout — only when DEVRAIL_PLUGIN_TIMEOUT_SECONDS is set)
 
-# Guard against double-sourcing
+# Guard against double-sourcing (review L2 — covered by tests case 14)
 # shellcheck disable=SC2317
 if [[ -n "${_DEVRAIL_PLUGIN_EXECUTE_LOADED:-}" ]]; then
   return 0 2>/dev/null || true
@@ -37,58 +51,45 @@ if ! declare -f log_event >/dev/null 2>&1; then
 fi
 
 # _devrail_plugin_cache_path returns the cache file path.
-# Single helper so future relocation only changes this function.
 _devrail_plugin_cache_path() {
   printf '%s' "${DEVRAIL_PLUGINS_CACHE:-/tmp/devrail-plugins-loaded.yaml}"
 }
 
-# _devrail_plugin_count returns the number of loaded plugins (0 when cache
-# is missing/empty/malformed). Always exits 0 — the dispatcher uses the
-# count as a gate, not as a parse-validity signal (the loader has already
-# validated the cache by the time the dispatcher runs).
-_devrail_plugin_count() {
-  local cache
-  cache="$(_devrail_plugin_cache_path)"
-  if [[ ! -s "${cache}" ]]; then
-    printf '0'
-    return 0
-  fi
-  yq -r '.plugins // [] | length' "${cache}" 2>/dev/null || printf '0'
-}
+# Note: the cache + .devrail.yml load is inlined into dispatch_plugin_target
+# rather than factored into a helper. A helper that returned both JSON blobs
+# via `printf -v <out-var>` would shadow the caller's var when both used the
+# same name (bash's `local` scoping breaks indirect assignment that way), so
+# we keep the parse inline. The single yq → JSON conversion still happens
+# only once per dispatch (review M3).
 
-# evaluate_gate <plugin-index> <target-name>
-# Returns 0 if every gate path exists (file/dir/glob match), 1 otherwise.
-# A skip emits a structured "plugin gate skipped" event listing the missing
-# path(s). Empty list or missing key = pass (always run).
+# evaluate_gate <cache-json> <plugin-index> <target-name> <plugin-name>
+# Returns:
+#   0 — gate passed (target should run)
+#   1 — gate skip (path missing); emits structured info event
+#   2 — gate config error (absolute path); emits structured error event
 #
-# Gate path semantics (per design doc § "Manifest schema rules"):
-#   - Workspace-relative only; absolute paths rejected (config error)
-#   - Each path matches if it exists as a file OR directory OR has at least
-#     one glob match (compgen -G)
-#   - ALL paths must match for the gate to pass
+# The caller treats 1 as silent skip, 2 as plugin failure (review M1).
 evaluate_gate() {
-  local idx="${1:?evaluate_gate requires a plugin index}"
-  local target="${2:?evaluate_gate requires a target name}"
-  local cache plugin_name gate_count i path missing=""
+  local cache_json="${1:?evaluate_gate requires cache JSON}"
+  local idx="${2:?evaluate_gate requires a plugin index}"
+  local target="${3:?evaluate_gate requires a target name}"
+  local plugin_name="${4:?evaluate_gate requires a plugin name}"
+  local gates path missing=""
 
-  cache="$(_devrail_plugin_cache_path)"
-  plugin_name="$(yq -r ".plugins[${idx}].name // \"\"" "${cache}" 2>/dev/null)"
-
-  gate_count="$(yq -r ".plugins[${idx}].gates.${target} // [] | length" "${cache}" 2>/dev/null || printf '0')"
-  if [[ "${gate_count}" == "0" ]]; then
+  gates="$(IDX="${idx}" TARGET="${target}" \
+    jq -r '.plugins[env.IDX|tonumber].gates[env.TARGET] // [] | .[]' \
+    <<<"${cache_json}")"
+  if [[ -z "${gates}" ]]; then
     return 0
   fi
 
-  for ((i = 0; i < gate_count; i++)); do
-    path="$(yq -r ".plugins[${idx}].gates.${target}[${i}]" "${cache}" 2>/dev/null)"
-    if [[ -z "${path}" || "${path}" == "null" ]]; then
-      continue
-    fi
+  while IFS= read -r path; do
+    [[ -z "${path}" || "${path}" == "null" ]] && continue
     if [[ "${path}" == /* ]]; then
       log_event error "plugin gate path must be workspace-relative" \
         plugin="${plugin_name}" target="${target}" path="${path}" \
         language=_plugins
-      return 1
+      return 2
     fi
     # File or directory check first (cheap), then glob fallback.
     if [[ -e "${path}" ]]; then
@@ -98,7 +99,7 @@ evaluate_gate() {
       continue
     fi
     missing="${missing:+${missing}, }${path}"
-  done
+  done <<<"${gates}"
 
   if [[ -n "${missing}" ]]; then
     log_event info "plugin gate skipped" \
@@ -109,39 +110,52 @@ evaluate_gate() {
   return 0
 }
 
-# render_cmd <plugin-index> <target-name>
-# Prints the rendered command string on stdout.
-# Substitutes {paths} with the runtime value of ${<paths_var>} filtered to
-# existing paths (mirroring how RUBY_PATHS is filtered in the Ruby block of
-# the core Makefile). Falls back to paths_default if the env var is unset.
-# When cmd contains literal `{paths}` but no paths_var is declared, exits 2
-# with a structured error (configuration mistake).
+# render_cmd <cache-json> <plugin-index> <target-name> <plugin-name> <cmd>
+# Prints the rendered command on stdout. `{paths}` is substituted with the
+# value of `${<paths_var>}` filtered to existing paths whose names contain
+# no shell-meta characters (review M6). Returns:
+#   0 — rendered successfully
+#   2 — config error (`{paths}` referenced but `paths_var` not declared);
+#       emits structured error event (review H1: returns instead of exit)
 render_cmd() {
-  local idx="${1:?render_cmd requires a plugin index}"
-  local target="${2:?render_cmd requires a target name}"
-  local cache cmd paths_var paths_default plugin_name p filtered=""
-
-  cache="$(_devrail_plugin_cache_path)"
-  plugin_name="$(yq -r ".plugins[${idx}].name // \"\"" "${cache}" 2>/dev/null)"
-  cmd="$(yq -r ".plugins[${idx}].targets.${target}.cmd // \"\"" "${cache}" 2>/dev/null)"
+  local cache_json="${1:?render_cmd requires cache JSON}"
+  local idx="${2:?render_cmd requires a plugin index}"
+  local target="${3:?render_cmd requires a target name}"
+  local plugin_name="${4:?render_cmd requires a plugin name}"
+  local cmd="${5:-}"
+  local paths_var paths_default raw p filtered=""
 
   if [[ "${cmd}" != *"{paths}"* ]]; then
     printf '%s' "${cmd}"
     return 0
   fi
 
-  paths_var="$(yq -r ".plugins[${idx}].targets.${target}.paths_var // \"\"" "${cache}" 2>/dev/null)"
-  paths_default="$(yq -r ".plugins[${idx}].targets.${target}.paths_default // \"\"" "${cache}" 2>/dev/null)"
+  paths_var="$(IDX="${idx}" TARGET="${target}" \
+    jq -r '.plugins[env.IDX|tonumber].targets[env.TARGET].paths_var // ""' \
+    <<<"${cache_json}")"
+  paths_default="$(IDX="${idx}" TARGET="${target}" \
+    jq -r '.plugins[env.IDX|tonumber].targets[env.TARGET].paths_default // ""' \
+    <<<"${cache_json}")"
 
   if [[ -z "${paths_var}" || "${paths_var}" == "null" ]]; then
     log_event error "plugin cmd uses {paths} but declares no paths_var" \
       plugin="${plugin_name}" target="${target}" cmd="${cmd}" \
       language=_plugins
-    exit 2
+    return 2
   fi
 
-  local raw="${!paths_var:-${paths_default}}"
+  raw="${!paths_var:-${paths_default}}"
   for p in ${raw}; do
+    # Reject shell-meta chars to keep `bash -c "${final_cmd}"` injection-free
+    # when paths come from user-controlled env vars (review M6).
+    case "${p}" in
+    *[\;\|\&\$\<\>\(\)\`\\\"\']*)
+      log_event warn "plugin path contains shell-meta characters; skipping" \
+        plugin="${plugin_name}" target="${target}" path="${p}" \
+        language=_plugins
+      continue
+      ;;
+    esac
     if [[ -e "${p}" ]]; then
       filtered="${filtered:+${filtered} }${p}"
     fi
@@ -150,27 +164,25 @@ render_cmd() {
   printf '%s' "${cmd//\{paths\}/${filtered}}"
 }
 
-# apply_override <language> <target-name> <default-cmd>
-# Prints the user-supplied override from .devrail.yml when present, otherwise
-# echoes the default cmd back. Override key by target:
+# apply_override <devrail-json> <language> <target-name> <default-cmd>
+# Prints the user-supplied override from `.devrail.yml` when present,
+# otherwise echoes the default cmd back.
+#
+# Override key by target:
 #   lint         → linter
 #   format_check → formatter
 #   format_fix   → formatter (same as format_check; symmetric with core)
 #   fix          → fixer
 #   test         → test
 #   security     → security
-# The override replaces the entire cmd string (no {paths} interpolation).
+#
+# The override replaces the entire cmd string (no `{paths}` interpolation).
 apply_override() {
-  local language="${1:?apply_override requires a language}"
-  local target="${2:?apply_override requires a target name}"
-  local default_cmd="${3:-}"
-  local devrail_yml="${DEVRAIL_CONFIG:-/workspace/.devrail.yml}"
+  local devrail_json="${1:?apply_override requires devrail JSON}"
+  local language="${2:?apply_override requires a language}"
+  local target="${3:?apply_override requires a target name}"
+  local default_cmd="${4:-}"
   local key override
-
-  if [[ ! -r "${devrail_yml}" ]]; then
-    printf '%s' "${default_cmd}"
-    return 0
-  fi
 
   case "${target}" in
   lint) key="linter" ;;
@@ -184,7 +196,8 @@ apply_override() {
     ;;
   esac
 
-  override="$(LANG_KEY="${language}" KEY="${key}" yq -r '.[strenv(LANG_KEY)][strenv(KEY)] // ""' "${devrail_yml}" 2>/dev/null)"
+  override="$(LANG_KEY="${language}" KEY="${key}" \
+    jq -r '.[env.LANG_KEY][env.KEY] // ""' <<<"${devrail_json}")"
   if [[ -n "${override}" && "${override}" != "null" ]]; then
     printf '%s' "${override}"
     return 0
@@ -195,53 +208,112 @@ apply_override() {
 # dispatch_plugin_target <target-name>
 # Iterates over loaded plugins; for each plugin that defines this target,
 # evaluates the gate, renders the command, applies any per-language override,
-# and runs the cmd via `bash -c`. Updates caller-scope shell variables
-# (overall_exit, ran_languages, failed_languages) and honours
-# DEVRAIL_FAIL_FAST=1 by returning early after the first failure.
+# and runs the cmd via `bash -c` (optionally wrapped in `timeout` when
+# DEVRAIL_PLUGIN_TIMEOUT_SECONDS is set). Updates caller-scope shell
+# variables and honours DEVRAIL_FAIL_FAST=1.
+#
+# Caller-scope vars updated:
+#   overall_exit        — set to 1 on plugin failure (or config error)
+#   ran_languages       — appended on success or failure (the plugin ran)
+#   failed_languages    — appended on cmd failure or config error
+#   skipped_languages   — appended on gate-skip (review L5; harmless when
+#                         the recipe doesn't use it)
 #
 # No-op when no plugins are loaded.
 dispatch_plugin_target() {
   local target="${1:?dispatch_plugin_target requires a target name}"
-  local plugin_count i name cmd rendered final_cmd plugin_exit
 
-  plugin_count="$(_devrail_plugin_count)"
-  if [[ "${plugin_count}" == "0" ]]; then
+  # Register caller-scope vars so shellcheck doesn't flag the writes below
+  # as SC2034 (review L1). The `:` builtin and `:=` default-assign keep the
+  # vars alive in the caller's shell without overwriting existing values.
+  : "${overall_exit:=0}" "${ran_languages:=}" "${failed_languages:=}" "${skipped_languages:=}"
+
+  local cache cache_json devrail_yml devrail_json="{}" parsed plugin_count i
+  cache="$(_devrail_plugin_cache_path)"
+  if [[ ! -s "${cache}" ]]; then
+    return 0
+  fi
+  if ! cache_json="$(yq -o=json . "${cache}" 2>&1)"; then
+    log_event error "loader cache could not be parsed by yq" \
+      cache="${cache}" stderr="${cache_json}" language=_plugins
+    overall_exit=1
+    failed_languages="${failed_languages}\"_plugins:cache-parse\","
+    return 1
+  fi
+  devrail_yml="${DEVRAIL_CONFIG:-/workspace/.devrail.yml}"
+  if [[ -r "${devrail_yml}" ]]; then
+    if parsed="$(yq -o=json . "${devrail_yml}" 2>&1)"; then
+      devrail_json="${parsed}"
+    else
+      log_event warn ".devrail.yml could not be parsed; per-language overrides disabled" \
+        path="${devrail_yml}" stderr="${parsed}" language=_plugins
+    fi
+  fi
+
+  plugin_count="$(jq -r '.plugins | length' <<<"${cache_json}")"
+  if [[ -z "${plugin_count}" || "${plugin_count}" == "null" || "${plugin_count}" == "0" ]]; then
     return 0
   fi
 
-  local cache
-  cache="$(_devrail_plugin_cache_path)"
-
   for ((i = 0; i < plugin_count; i++)); do
-    name="$(yq -r ".plugins[${i}].name" "${cache}")"
-    cmd="$(yq -r ".plugins[${i}].targets.${target}.cmd // \"\"" "${cache}" 2>/dev/null)"
+    local name cmd rendered render_status final_cmd plugin_exit gate_status
+    name="$(IDX="${i}" jq -r '.plugins[env.IDX|tonumber].name // ""' <<<"${cache_json}")"
+    cmd="$(IDX="${i}" TARGET="${target}" \
+      jq -r '.plugins[env.IDX|tonumber].targets[env.TARGET].cmd // ""' \
+      <<<"${cache_json}")"
     if [[ -z "${cmd}" || "${cmd}" == "null" ]]; then
-      # Plugin doesn't expose this target — silent skip (no event).
+      # Plugin doesn't expose this target — silent skip (review L3).
       continue
     fi
 
-    if ! evaluate_gate "${i}" "${target}"; then
+    gate_status=0
+    evaluate_gate "${cache_json}" "${i}" "${target}" "${name}" || gate_status=$?
+    case "${gate_status}" in
+    0) ;; # gate passed; run target
+    1)    # gate skip — silent (event already emitted)
+      skipped_languages="${skipped_languages}\"${name}\","
+      continue
+      ;;
+    2) # gate config error — surface as plugin failure
+      overall_exit=1
+      failed_languages="${failed_languages}\"${name}:gate-config\","
+      if [[ "${DEVRAIL_FAIL_FAST}" == "1" ]]; then
+        return 1
+      fi
+      continue
+      ;;
+    esac
+
+    rendered=""
+    render_status=0
+    rendered="$(render_cmd "${cache_json}" "${i}" "${target}" "${name}" "${cmd}")" || render_status=$?
+    if [[ "${render_status}" -ne 0 ]]; then
+      overall_exit=1
+      failed_languages="${failed_languages}\"${name}:cmd-config\","
+      if [[ "${DEVRAIL_FAIL_FAST}" == "1" ]]; then
+        return 1
+      fi
       continue
     fi
 
-    rendered="$(render_cmd "${i}" "${target}")"
-    final_cmd="$(apply_override "${name}" "${target}" "${rendered}")"
+    final_cmd="$(apply_override "${devrail_json}" "${name}" "${target}" "${rendered}")"
 
     log_event info "plugin target executing" \
       plugin="${name}" target="${target}" language=_plugins
     plugin_exit=0
-    bash -c "${final_cmd}" || plugin_exit=$?
+    if [[ -n "${DEVRAIL_PLUGIN_TIMEOUT_SECONDS:-}" ]]; then
+      timeout -k 5 "${DEVRAIL_PLUGIN_TIMEOUT_SECONDS}" \
+        bash -c "${final_cmd}" || plugin_exit=$?
+    else
+      bash -c "${final_cmd}" || plugin_exit=$?
+    fi
     if [[ "${plugin_exit}" -eq 0 ]]; then
-      # shellcheck disable=SC2034  # caller-scope variable from Makefile recipe
       ran_languages="${ran_languages}\"${name}\","
       log_event info "plugin target passed" \
         plugin="${name}" target="${target}" language=_plugins
     else
-      # shellcheck disable=SC2034  # caller-scope variables from Makefile recipe
       ran_languages="${ran_languages}\"${name}\","
-      # shellcheck disable=SC2034
       failed_languages="${failed_languages}\"${name}\","
-      # shellcheck disable=SC2034
       overall_exit=1
       log_event error "plugin target failed" \
         plugin="${name}" target="${target}" exit_code:="${plugin_exit}" \
