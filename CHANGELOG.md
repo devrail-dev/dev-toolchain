@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-05-05
+
 ### Added
 
 - **Kotlin reference plugin extraction (Story 13.7).** The first language
