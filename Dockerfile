@@ -187,8 +187,15 @@ COPY --from=ruby-builder /usr/local/bundle /usr/local/bundle
 RUN ln -sf libruby.so.3.4 /usr/local/lib/libruby.so.3.4.0 \
     && ln -sf libruby.so.3.4 /usr/local/lib/libruby.so \
     && ldconfig
+# Bundler envvars. We DO NOT export BUNDLE_PATH at runtime — Bundler's
+# precedence is envvar > project `.bundle/config`, which silently
+# overrides a consumer's `BUNDLE_PATH: vendor/bundle` and breaks
+# `bundle exec` for project-pinned gems (Issue #42). With BUNDLE_PATH
+# unset, Bundler falls back to GEM_HOME — direct `rubocop` / `reek` /
+# `rspec` invocations from `/usr/local/bundle/bin` (already on PATH)
+# still resolve the container's bundled gems, and `bundle exec` in a
+# consumer project honours the project's `.bundle/config`.
 ENV GEM_HOME=/usr/local/bundle
-ENV BUNDLE_PATH=/usr/local/bundle
 ENV BUNDLE_SILENCE_ROOT_WARNING=1
 ENV BUNDLE_APP_CONFIG=/usr/local/bundle
 
