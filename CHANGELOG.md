@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Issue #41:** Makefile's `LANGUAGES` invocation of `yq` now uses `-r`
+  (raw output). yq v3 (kislyuk's Python wrapper, packaged as `yq` on
+  Debian/Ubuntu) returns JSON-formatted scalars by default — without
+  `-r`, `.languages[]` returned `"ruby"` (quoted) and `HAS_RUBY` never
+  matched. With `-r`, behaviour is identical between yq v3 and v4.
+- **Issue #42:** Container no longer exports `BUNDLE_PATH=/usr/local/bundle`
+  at runtime. Bundler precedence rule (envvar beats project
+  `.bundle/config`) was silently overriding consumer projects with
+  `BUNDLE_PATH: vendor/bundle`, breaking `bundle exec` for
+  project-pinned gems with `Bundler::GemNotFound`. With the envvar
+  unset, the project's `.bundle/config` wins; direct gem invocations
+  (`rubocop`, `reek`, `rspec`) still resolve from `/usr/local/bundle`
+  via `GEM_HOME` and the `PATH` entry for `/usr/local/bundle/bin`.
+- **Issue #43:** Makefile's `_format` no longer passes `--check` to
+  `rubocop` — it's not a valid rubocop flag and broke every Rails
+  project with rubocop in its Gemfile. Default rubocop behaviour is
+  already "report, don't autocorrect"; `--fail-level error` (still
+  passed) gates the exit code.
+
 ## [1.11.0] - 2026-05-05
 
 ### Added

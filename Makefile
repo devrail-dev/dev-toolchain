@@ -85,7 +85,7 @@ RUBY_EXEC_FOR = $(if $(and $(wildcard Gemfile.lock),$(shell grep -m1 -E "^[[:spa
 # Computed before DOCKER_RUN so HAS_<LANG> can influence container env (e.g.
 # BUNDLE_APP_CONFIG override for Ruby projects — issue #30).
 # ---------------------------------------------------------------------------
-LANGUAGES      := $(shell yq '.languages[]' $(DEVRAIL_CONFIG) 2>/dev/null)
+LANGUAGES      := $(shell yq -r '.languages[]' $(DEVRAIL_CONFIG) 2>/dev/null)
 HAS_PYTHON     := $(filter python,$(LANGUAGES))
 HAS_BASH       := $(filter bash,$(LANGUAGES))
 HAS_TERRAFORM  := $(filter terraform,$(LANGUAGES))
@@ -656,7 +656,7 @@ _format: _plugins-load
 		for p in $(RUBY_PATHS); do [ -d "$$p" ] && ruby_paths="$$ruby_paths $$p"; done; \
 		ruby_paths=$${ruby_paths# }; \
 		if [ -n "$$ruby_paths" ]; then \
-			$(call RUBY_EXEC_FOR,rubocop)rubocop --check --fail-level error $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+			$(call RUBY_EXEC_FOR,rubocop)rubocop --fail-level error $$ruby_paths || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 		else \
 			echo '{"level":"info","msg":"skipping ruby format: none of RUBY_PATHS exist (override with RUBY_PATHS=...)","language":"ruby"}' >&2; \
 		fi; \
