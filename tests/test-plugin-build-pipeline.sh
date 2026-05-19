@@ -40,6 +40,13 @@ assert_eq() {
   local expected="$1" actual="$2" context="$3"
   if [ "$expected" != "$actual" ]; then
     echo "FAIL [$context]: expected '$expected', got '$actual'" >&2
+    # If the most-recent run captured output, surface it so CI failures
+    # aren't black boxes. Tests that don't use RUN_OUT just print empty.
+    if [ -n "${RUN_OUT:-}" ]; then
+      echo "--- captured output ---" >&2
+      echo "$RUN_OUT" >&2
+      echo "--- end captured output ---" >&2
+    fi
     exit 1
   fi
 }
