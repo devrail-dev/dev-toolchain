@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Apply Debian security upgrades on every image build.** The runtime
+  stage's `apt-get install` no longer trusts the base image to be at
+  current patch level — an `apt-get upgrade -y --no-install-recommends`
+  in the same layer pulls security-patched versions of base packages
+  (libcap2, libsystemd0, libudev1, etc.). Closes the gap that caused
+  Trivy's blocking OS-package scan to fail on v1.11.2 after Debian
+  shipped CVE-2026-4878 (libcap2 privilege-escalation TOCTOU race) and
+  CVE-2026-29111 (systemd arbitrary code execution / DoS) without the
+  `debian:bookworm-slim` manifest catching up.
+
 ### Fixed
 
 - **Issue #41:** Makefile's `LANGUAGES` invocation of `yq` now uses `-r`
