@@ -93,23 +93,29 @@ LABEL org.opencontainers.image.description="DevRail developer toolchain containe
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.opencontainers.image.version="${DEVRAIL_VERSION}"
 
-# Base system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    git \
-    gnupg \
-    jq \
-    make \
-    python3 \
-    python3-pip \
-    python3-venv \
-    build-essential \
-    libyaml-dev \
-    shellcheck \
-    unzip \
-    wget \
+# Base system dependencies. `apt-get upgrade` pulls security-patched
+# versions of packages already in the base image (libcap2, libsystemd0,
+# libudev1, etc.) — without it, Trivy's blocking OS-package scan rejects
+# the build when Debian publishes a CVE fix before the base-image
+# manifest catches up. Same layer as `install` to keep image size down.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gnupg \
+        jq \
+        make \
+        python3 \
+        python3-pip \
+        python3-venv \
+        build-essential \
+        libyaml-dev \
+        shellcheck \
+        unzip \
+        wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yq for YAML parsing in Makefile language detection
