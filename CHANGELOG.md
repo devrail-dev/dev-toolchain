@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.3] - 2026-05-20
+
 ### Security
 
 - **Apply Debian security upgrades on every image build.** The runtime
