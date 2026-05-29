@@ -65,6 +65,17 @@ HAS_PLUGINS_DECLARED := $(if $(filter-out missing error 0,$(DEVRAIL_PLUGIN_PROBE
 # them as `-e KEY=VALUE` into DOCKER_RUN. Empty/missing section is a no-op.
 DEVRAIL_ENV_FLAGS := $(shell yq -r '.env // {} | to_entries | .[] | "-e " + .key + "=" + .value' $(DEVRAIL_CONFIG) 2>/dev/null)
 
+# Read project-specific Docker networking + volume mounts from .devrail.yml and
+# inject them into DOCKER_RUN. `docker_network` (single value) attaches the
+# toolchain container to a user-defined network so it can reach a sibling
+# service container (e.g. a Postgres at hostname `myapp-pg` during `make test`).
+# `docker_volumes` (list) mounts extra host paths or named volumes. Both mirror
+# the `env:` -> DEVRAIL_ENV_FLAGS pattern; empty/missing sections are no-ops.
+# Issue #48.
+DEVRAIL_DOCKER_NETWORK := $(shell yq -r '.docker_network // ""' $(DEVRAIL_CONFIG) 2>/dev/null)
+DEVRAIL_NETWORK_FLAG   := $(if $(DEVRAIL_DOCKER_NETWORK),--network $(DEVRAIL_DOCKER_NETWORK),)
+DEVRAIL_VOLUME_FLAGS   := $(shell yq -r '.docker_volumes // [] | .[] | "-v " + .' $(DEVRAIL_CONFIG) 2>/dev/null)
+
 # Ruby lint/format scope. Defaults to the conventional Rails directory set so
 # rubocop and reek do not descend into vendor/bundle/ (which can hold tens of
 # thousands of files of installed gem source). Override per-project via:
@@ -78,6 +89,11 @@ RUBY_PATHS         ?= app lib spec config bin
 # breaking projects that just declare `languages: [ruby]` and rely on the
 # container's defaults. Issue #30 Gap C.
 # Usage in recipes: $(call RUBY_EXEC_FOR,rubocop)rubocop $$ruby_paths
+# NOTE: for rspec, detect on `rspec-core` (the actual runner gem) rather than a
+# bare `rspec`. A Rails app declares only `rspec-rails`, so its lockfile has no
+# bare `rspec` line — keying on that would skip `bundle exec` and run the
+# container's bundled rspec, which activates Ruby 3.4's default gems before
+# bundler/setup (the `cgi 0.4.2 vs 0.5.1` LoadError). Issue #46.
 RUBY_EXEC_FOR = $(if $(and $(wildcard Gemfile.lock),$(shell grep -m1 -E "^[[:space:]]+$(1)[[:space:]]" Gemfile.lock 2>/dev/null)),bundle exec ,)
 
 # ---------------------------------------------------------------------------
@@ -111,6 +127,8 @@ DOCKER_RUN = docker run --rm \
 	-e DEVRAIL_LOG_FORMAT=$(DEVRAIL_LOG_FORMAT) \
 	$(DEVRAIL_ENV_FLAGS) \
 	$(RUBY_DOCKER_ENV) \
+	$(DEVRAIL_NETWORK_FLAG) \
+	$(DEVRAIL_VOLUME_FLAGS) \
 	$(DEVRAIL_RESOLVED_IMAGE)
 
 .DEFAULT_GOAL := help
@@ -1001,10 +1019,10 @@ _test: _plugins-load
 					echo '{"level":"error","msg":"db:test:prepare failed — ensure your test database is reachable (e.g. start postgres before make test)","language":"ruby"}' >&2; \
 					overall_exit=1; failed_languages="$${failed_languages}\"ruby:db-prepare\","; \
 				else \
-					$(call RUBY_EXEC_FOR,rspec)rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+					$(call RUBY_EXEC_FOR,rspec-core)rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 				fi; \
 			else \
-				$(call RUBY_EXEC_FOR,rspec)rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
+				$(call RUBY_EXEC_FOR,rspec-core)rspec || { overall_exit=1; failed_languages="$${failed_languages}\"ruby\","; }; \
 			fi; \
 		else \
 			skipped_languages="$${skipped_languages}\"ruby\","; \

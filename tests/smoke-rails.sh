@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# tests/smoke-rails.sh — Rails 7+ smoke test for issues #25 and #28
+# tests/smoke-rails.sh — Rails 7+ smoke test for issues #25, #28, #30, #46, #48
 #
 # Verifies the image is consumable by Rails 7+ projects out-of-the-box:
 #   1. Gemfile with `platforms: %i[mri windows]` parses (needs Bundler 2.6+).
 #   2. make _lint scopes to RUBY_PATHS — vendor/bundle/ is NOT scanned.
 #   3. `bundle install` succeeds against a Gemfile containing `gem 'debug'`
 #      — exercises the psych->libyaml native compile path (issue #28).
+#   4. Project .bundle/config wins over the container default (issue #30).
+#   5. RUBY_EXEC_FOR detects rspec-rails projects via rspec-core (issue #46).
+#   6. docker_network / docker_volumes render the right docker run flags (#48).
 #
 # Usage: bash tests/smoke-rails.sh
 # Env:
@@ -178,5 +181,109 @@ if [ "$bundle_path_seen" != "vendor/bundle" ]; then
   exit 1
 fi
 echo "==> .bundle/config override: PASS (BUNDLE_PATH = $bundle_path_seen)"
+
+# --- 5) RUBY_EXEC_FOR detects rspec-rails projects (issue #46) -------------
+# A Rails app declares only `rspec-rails`; its Gemfile.lock has no bare `rspec`
+# line. Keying detection on `rspec` skipped `bundle exec` and ran the
+# container's bundled rspec, which activates Ruby 3.4's default gems before
+# bundler/setup (the cgi 0.4.2 vs 0.5.1 LoadError). The Makefile now keys on
+# `rspec-core` (the runner gem, always present). Probe the real macro from the
+# mounted Makefile via `make --eval` — no bundle install / DB needed.
+echo "==> Verifying RUBY_EXEC_FOR detects rspec-rails projects (issue #46)"
+PROBE46="$FIXTURE/probe46"
+mkdir -p "$PROBE46"
+cat >"$PROBE46/.devrail.yml" <<'YAML'
+languages: [ruby]
+YAML
+cat >"$PROBE46/Gemfile.lock" <<'LOCK'
+GEM
+  remote: https://rubygems.org/
+  specs:
+    rspec-core (3.13.0)
+      rspec-support (~> 3.13.0)
+    rspec-expectations (3.13.0)
+    rspec-rails (6.1.0)
+      rspec-core (~> 3.13)
+    rspec-support (3.13.0)
+LOCK
+rspec_exec=$(docker run --rm \
+  -v "$PROBE46:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -w /workspace "$IMAGE" \
+  make --eval='_probe: ; @printf "%s" "$(call RUBY_EXEC_FOR,rspec-core)"' \
+  -f /workspace/Makefile _probe 2>/dev/null)
+if [ "$rspec_exec" != "bundle exec " ]; then
+  echo "FAIL: rspec-rails project resolved exec prefix to '$rspec_exec', expected 'bundle exec '" >&2
+  exit 1
+fi
+# Negative control: a lock with no rspec must NOT force bundle exec — preserves
+# the "only bundle exec when the project actually pins the tool" intent.
+cat >"$PROBE46/Gemfile.lock" <<'LOCK'
+GEM
+  remote: https://rubygems.org/
+  specs:
+    rake (13.2.1)
+LOCK
+no_rspec_exec=$(docker run --rm \
+  -v "$PROBE46:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -w /workspace "$IMAGE" \
+  make --eval='_probe: ; @printf "%s" "$(call RUBY_EXEC_FOR,rspec-core)"' \
+  -f /workspace/Makefile _probe 2>/dev/null)
+if [ -n "$no_rspec_exec" ]; then
+  echo "FAIL: lockfile without rspec forced exec prefix '$no_rspec_exec', expected empty" >&2
+  exit 1
+fi
+echo "==> rspec-rails detection: PASS"
+
+# --- 6) docker_network + docker_volumes passthrough (issue #48) -----------
+# Projects can attach the toolchain container to a sibling-service network and
+# mount extra volumes via .devrail.yml. Verify the Makefile renders the flags
+# (and that absent keys are a no-op).
+echo "==> Verifying docker_network / docker_volumes passthrough (issue #48)"
+PROBE48="$FIXTURE/probe48"
+mkdir -p "$PROBE48"
+cat >"$PROBE48/.devrail.yml" <<'YAML'
+languages: [ruby]
+docker_network: devrail-smoke-net
+docker_volumes:
+  - /tmp/fixtures:/workspace/fixtures
+  - shared-cache:/cache
+YAML
+net_flag=$(docker run --rm \
+  -v "$PROBE48:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -w /workspace "$IMAGE" \
+  make --eval='_probe: ; @printf "%s" "$(DEVRAIL_NETWORK_FLAG)"' \
+  -f /workspace/Makefile _probe 2>/dev/null)
+if [ "$net_flag" != "--network devrail-smoke-net" ]; then
+  echo "FAIL: docker_network rendered '$net_flag', expected '--network devrail-smoke-net'" >&2
+  exit 1
+fi
+vol_flags=$(docker run --rm \
+  -v "$PROBE48:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -w /workspace "$IMAGE" \
+  make --eval='_probe: ; @printf "%s" "$(DEVRAIL_VOLUME_FLAGS)"' \
+  -f /workspace/Makefile _probe 2>/dev/null)
+if [ "$vol_flags" != "-v /tmp/fixtures:/workspace/fixtures -v shared-cache:/cache" ]; then
+  echo "FAIL: docker_volumes rendered '$vol_flags', expected '-v /tmp/fixtures:/workspace/fixtures -v shared-cache:/cache'" >&2
+  exit 1
+fi
+# Absent keys must be a no-op (no stray flags leak into DOCKER_RUN).
+cat >"$PROBE48/.devrail.yml" <<'YAML'
+languages: [ruby]
+YAML
+empty_flags=$(docker run --rm \
+  -v "$PROBE48:/workspace" \
+  -v "$REPO_ROOT/Makefile:/workspace/Makefile:ro" \
+  -w /workspace "$IMAGE" \
+  make --eval='_probe: ; @printf "[%s]" "$(DEVRAIL_NETWORK_FLAG)$(DEVRAIL_VOLUME_FLAGS)"' \
+  -f /workspace/Makefile _probe 2>/dev/null)
+if [ "$empty_flags" != "[]" ]; then
+  echo "FAIL: absent docker_network/docker_volumes rendered '$empty_flags', expected '[]'" >&2
+  exit 1
+fi
+echo "==> docker_network / docker_volumes passthrough: PASS"
 
 echo "==> All Rails smoke checks passed"

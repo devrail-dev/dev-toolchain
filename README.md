@@ -75,6 +75,27 @@ languages:
   - rust
 ```
 
+Optional keys customize how the toolchain container runs. All are no-ops when
+omitted:
+
+```yaml
+# Pass extra environment variables into the container.
+env:
+  RAILS_ENV: test
+  DATABASE_HOST: myapp-pg
+
+# Attach the container to a user-defined Docker network so it can reach a
+# sibling service container (e.g. a Postgres at hostname `myapp-pg` during
+# `make test`). Single network name.
+docker_network: myapp-test
+
+# Mount additional host paths or named volumes into the container. List of
+# `host:container` (or `volume:container`) specs, passed straight to `docker -v`.
+docker_volumes:
+  - ./fixtures:/workspace/fixtures
+  - shared-cache:/cache
+```
+
 ## Architecture
 
 - **Base image:** Debian bookworm-slim (multi-arch: amd64 + arm64)

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Issue #48:** `.devrail.yml` now supports two optional keys for
+  customizing the toolchain container's `docker run`: `docker_network`
+  (a single user-defined network name, rendered as `--network <name>`)
+  and `docker_volumes` (a list of `host:container` mount specs, each
+  rendered as `-v <spec>`). These let Rails-style projects reach a
+  sibling service container (e.g. a Postgres at `myapp-pg`) and mount
+  extra data during `make test`. Both mirror the existing `env:` →
+  `DEVRAIL_ENV_FLAGS` pattern and are no-ops when absent.
+
+### Fixed
+
+- **Issue #46:** `make test` for Rails projects that depend on
+  `rspec-rails` (the idiomatic Rails-side gem) now correctly runs
+  `bundle exec rspec`. The `RUBY_EXEC_FOR` detection keyed on a bare
+  `rspec` lockfile entry, which `rspec-rails` projects don't have — so
+  the bareword `rspec` ran the container's bundled gem and activated
+  Ruby 3.4's default `cgi 0.4.2` before bundler/setup could switch to
+  the lockfile-pinned `cgi 0.5.1` (`Gem::LoadError`). Detection now keys
+  on `rspec-core` (the runner gem, present whenever any rspec variant
+  is), preserving the "only `bundle exec` when the project pins the
+  tool" behaviour for non-Rails projects.
+
 ## [1.11.3] - 2026-05-20
 
 ### Security
