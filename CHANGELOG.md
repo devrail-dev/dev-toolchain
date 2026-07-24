@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Issue #53 (Story 15.1):** `make lint`/`format`/`fix`/`test`/`security`
+  now autodetect per-language project roots in Python+JS monorepos (e.g.
+  `api/pyproject.toml` + `frontend/package.json`, no manifests at repo
+  root) and run each language's tools with cwd set there, so local config
+  (`tsconfig.json`, `vite.config.ts` path aliases, `pyproject.toml`)
+  resolves correctly. New `lib/project-discover.sh` helper; optional
+  `.devrail.yml` `projects:` override for layouts autodetection can't
+  infer. Single-root projects (the common case) are unaffected — output
+  is byte-identical to previous versions.
+
 ## [1.12.0] - 2026-05-30
 
 ### Added

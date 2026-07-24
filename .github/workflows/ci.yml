@@ -62,6 +62,17 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Story 15.1: Project-root discovery smoke test (issue #53)
+      # Verifies lib/project-discover.sh: single-root fallback (regression
+      # safety), Python+JS monorepo autodetection, multi-root, projects:
+      # override, and full make _lint/_test integration (cwd + local config
+      # + vite `@` alias resolution).
+      - name: Project-root discovery smoke test
+        run: bash tests/test-project-discover.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 2e: Plugin resolver + lockfile smoke test (Story 13.3)
       # Drives `make plugins-update` against a local-filesystem git fixture
       # (no network) covering: SHA passthrough, tag→SHA, branch rejection,
