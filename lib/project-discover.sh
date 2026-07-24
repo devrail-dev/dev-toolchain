@@ -115,6 +115,10 @@ discover_project_roots() {
   local override
   override="$(_project_discover_override "${language}")"
   if [[ -n "${override}" ]]; then
+    local override_path
+    while IFS= read -r override_path; do
+      [[ -d "${override_path}" ]] || log_warn "projects: path '${override_path}' (language '${language}') does not exist in the repository"
+    done <<<"${override}"
     printf '%s\n' "${override}"
     return 0
   fi
