@@ -966,6 +966,7 @@ _fix: _plugins-load
 _test: _plugins-load
 	@. /opt/devrail/lib/plugin-execute.sh; \
 	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/project-discover.sh"; \
+	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/dependency-install.sh"; \
 	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
@@ -974,7 +975,11 @@ _test: _plugins-load
 	if [ -n "$(HAS_PYTHON)" ]; then \
 		while IFS= read -r py_root; do \
 			if [ "$$py_root" = "." ]; then py_tag="python"; else py_tag="python:$$py_root"; fi; \
-			if [ -d "$$py_root/tests" ] || find "$$py_root" -name '*_test.py' -o -name 'test_*.py' 2>/dev/null | grep -q .; then \
+			if ! install_project_deps python "$$py_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag:install\","; \
+			elif ! run_project_setup "$$py_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag:setup\","; \
+			elif [ -d "$$py_root/tests" ] || find "$$py_root" -name '*_test.py' -o -name 'test_*.py' 2>/dev/null | grep -q .; then \
 				ran_languages="$${ran_languages}\"$$py_tag\","; \
 				(cd "$$py_root" && pytest) || { overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag\","; }; \
 			else \
@@ -1078,7 +1083,11 @@ _test: _plugins-load
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
 		while IFS= read -r js_root; do \
 			if [ "$$js_root" = "." ]; then js_tag="javascript"; else js_tag="javascript:$$js_root"; fi; \
-			if find "$$js_root" \( -name '*.test.*' -o -name '*.spec.*' \) -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null | grep -q .; then \
+			if ! install_project_deps javascript "$$js_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag:install\","; \
+			elif ! run_project_setup "$$js_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag:setup\","; \
+			elif find "$$js_root" \( -name '*.test.*' -o -name '*.spec.*' \) -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null | grep -q .; then \
 				ran_languages="$${ran_languages}\"$$js_tag\","; \
 				(cd "$$js_root" && vitest run) || { overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag\","; }; \
 			else \

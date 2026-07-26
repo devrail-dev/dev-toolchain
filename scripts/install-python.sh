@@ -12,6 +12,7 @@
 #   - semgrep   (Multi-language SAST)
 #   - pytest    (Python test framework)
 #   - mypy      (Python static type checker)
+#   - uv        (Python package/dependency manager — Story 15.2)
 
 set -euo pipefail
 
@@ -28,7 +29,7 @@ source "${DEVRAIL_LIB}/platform.sh"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   log_info "install-python.sh — Install Python tooling for DevRail"
   log_info "Usage: bash scripts/install-python.sh [--help]"
-  log_info "Tools: ruff, bandit, semgrep, pytest, mypy"
+  log_info "Tools: ruff, bandit, semgrep, pytest, mypy, uv"
   exit 0
 fi
 
@@ -65,6 +66,7 @@ readonly PYTHON_TOOLS=(
   "semgrep"
   "pytest"
   "mypy"
+  "uv"
 )
 
 for tool in "${PYTHON_TOOLS[@]}"; do

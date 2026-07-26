@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.devrail.yml` `projects:` override for layouts autodetection can't
   infer. Single-root projects (the common case) are unaffected — output
   is byte-identical to previous versions.
+- **Issue #52 (Story 15.2):** `make test` now installs a project's own
+  dependencies before running `pytest`/`vitest`, so tests no longer fail
+  at import time with `ModuleNotFoundError`/unresolved-import errors.
+  Autodetects `uv.lock` (`uv export | uv pip install --system`),
+  `requirements*.txt` (`pip install -r`), or `pyproject.toml`/`setup.py`
+  (`pip install -e .`) for Python, and `package-lock.json` (`npm ci`) for
+  JS/TS, in each project root discovered by Story 15.1. New
+  `lib/dependency-install.sh` helper; new `.devrail.yml` `test.install`/
+  `test.setup` overrides. Container image now ships `uv`. A failed install
+  fails `make test` immediately — the test suite never runs against a
+  broken install. Projects with no lockfile/manifest are unaffected.
 
 ## [1.12.0] - 2026-05-30
 

@@ -18,7 +18,7 @@ source "${DEVRAIL_LIB}/log.sh"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   log_info "test-python.sh — Validate Python tooling installation"
   log_info "Usage: bash tests/test-python.sh [--help]"
-  log_info "Checks: ruff, bandit, semgrep, pytest, mypy"
+  log_info "Checks: ruff, bandit, semgrep, pytest, mypy, uv"
   exit 0
 fi
 
@@ -52,6 +52,7 @@ check_tool "bandit" "--version"
 check_tool "semgrep" "--version"
 check_tool "pytest" "--version"
 check_tool "mypy" "--version"
+check_tool "uv" "--version"
 
 if [[ "${FAILURES}" -gt 0 ]]; then
   log_error "Python tooling validation failed: ${FAILURES} tool(s) missing or broken"

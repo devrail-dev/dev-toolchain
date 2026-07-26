@@ -73,6 +73,19 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Story 15.2: Dependency-install-before-test smoke test (issue #52)
+      # Verifies lib/dependency-install.sh: uv.lock/requirements.txt/
+      # pyproject.toml (Python) and package-lock.json (JS) autodetection
+      # with REAL network installs, test.install/test.setup overrides, a
+      # failed install failing make test fast (no partial-install test
+      # runs), and the no-manifest regression case. Requires network
+      # egress to PyPI/npm — this runner has it.
+      - name: Dependency install smoke test
+        run: bash tests/test-dependency-install.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 2e: Plugin resolver + lockfile smoke test (Story 13.3)
       # Drives `make plugins-update` against a local-filesystem git fixture
       # (no network) covering: SHA passthrough, tag→SHA, branch rejection,
