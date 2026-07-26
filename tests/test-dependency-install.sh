@@ -13,7 +13,12 @@
 #      against a broken/partial install (AC 8)
 #   8. A project with no lockfile/manifest for a declared language is
 #      unaffected — no install step runs (AC 7, regression safety; reuses
-#      Story 15.1's declared-lang-no-manifest fixture)
+#      Story 15.1's declared-lang-no-manifest and monorepo-python-js
+#      fixtures for the Python and JS sides respectively)
+#   9. requirements.txt wins over requirements-dev.txt (or any other
+#      requirements*.txt variant) rather than picking whichever sorts
+#      first alphabetically — '-' sorts before '.' in ASCII, so a naive
+#      sorted-glob pick would silently prefer requirements-dev.txt
 #
 # Every installing case here does a REAL network install against PyPI/npm
 # inside the container — this is intentional, not an oversight. The whole
@@ -95,6 +100,10 @@ echo "==> python-pyproject-only: pyproject.toml only -> pip install -e ."
 SUMMARY=$(run_test python-pyproject-only)
 assert_eq "pass" "$(printf '%s' "$SUMMARY" | jq -r '.status')" "pyproject-only/status"
 
+echo "==> python-multi-requirements: requirements.txt wins over requirements-dev.txt (not alphabetical sort)"
+SUMMARY=$(run_test python-multi-requirements)
+assert_eq "pass" "$(printf '%s' "$SUMMARY" | jq -r '.status')" "multi-requirements/status"
+
 echo "==> js-npm-deps: package-lock.json -> npm ci"
 SUMMARY=$(run_test js-npm-deps)
 assert_eq "pass" "$(printf '%s' "$SUMMARY" | jq -r '.status')" "npm-deps/status"
@@ -128,9 +137,13 @@ else
   PASS=$((PASS + 1))
 fi
 
-echo "==> declared-lang-no-manifest (Story 15.1 fixture): no lockfile/manifest -> no install attempted, unaffected"
+echo "==> declared-lang-no-manifest (Story 15.1 fixture): no lockfile/manifest (Python) -> no install attempted, unaffected"
 SUMMARY=$(run_test declared-lang-no-manifest)
 assert_eq "skip" "$(printf '%s' "$SUMMARY" | jq -r '.status')" "no-manifest/status"
+
+echo "==> monorepo-python-js (Story 15.1 fixture): frontend/ has package.json but no package-lock.json -> JS install no-op, unaffected"
+SUMMARY=$(run_test monorepo-python-js)
+assert_eq "pass" "$(printf '%s' "$SUMMARY" | jq -r '.status')" "js-no-lockfile/status"
 
 echo ""
 echo "==================================="

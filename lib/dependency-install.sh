@@ -51,6 +51,14 @@ _DEPENDENCY_INSTALL_CONFIG="$(pwd)/${DEVRAIL_CONFIG:-.devrail.yml}"
 
 # _dependency_install_config_value <yq-path> emits the string value at the
 # given yq path in .devrail.yml, or empty if missing/absent/unreadable.
+#
+# Re-invokes yq on every call — once per (language, root) pair per `make
+# test` run, since install_project_deps/run_project_setup both call this.
+# Deliberately not cached: a handful of extra `yq` subprocess spawns per
+# run (milliseconds each) hasn't been shown to matter at this project's
+# scale, and caching adds real invalidation/staleness complexity for a
+# cost that's currently theoretical. Revisit only if this ever actually
+# shows up as slow, not preemptively.
 _dependency_install_config_value() {
   local yq_path="$1"
   [[ -r "${_DEPENDENCY_INSTALL_CONFIG}" ]] || return 0
@@ -81,7 +89,16 @@ _dependency_install_autodetect_python() {
     printf 'uv export --frozen --no-hashes --format requirements-txt | uv pip install --system --break-system-packages -r -'
   elif compgen -G "requirements*.txt" >/dev/null 2>&1; then
     local req_file
-    req_file="$(compgen -G "requirements*.txt" | sort | head -1)"
+    if [[ -f "requirements.txt" ]]; then
+      # Plain requirements.txt wins outright when present, even over an
+      # alphabetically-earlier variant (e.g. requirements-dev.txt sorts
+      # before requirements.txt since '-' < '.' in ASCII) — a sort-only
+      # pick would silently install the wrong file for the common
+      # requirements.txt + requirements-dev.txt layout.
+      req_file="requirements.txt"
+    else
+      req_file="$(compgen -G "requirements*.txt" | sort | head -1)"
+    fi
     printf 'pip install --break-system-packages -r %q' "${req_file}"
   elif [[ -f "pyproject.toml" || -f "setup.py" ]]; then
     printf 'pip install --break-system-packages -e .'
