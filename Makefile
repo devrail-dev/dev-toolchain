@@ -500,19 +500,22 @@ _lint: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		ran_languages="$${ran_languages}\"go\","; \
-		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$go_files" ]; then \
-			golangci-lint run ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping go lint: no .go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			go_files=$$(find "$$go_root" -name '*.go' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' 2>/dev/null); \
+			if [ -n "$$go_files" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && golangci-lint run ./...) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go lint: no .go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
 		while IFS= read -r js_root; do \
@@ -544,19 +547,22 @@ _lint: _plugins-load
 		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		ran_languages="$${ran_languages}\"rust\","; \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ]; then \
-			cargo clippy --all-targets --all-features -- -D warnings || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping rust lint: no .rs files found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo clippy --all-targets --all-features -- -D warnings) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust lint: no .rs files found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		ran_languages="$${ran_languages}\"swift\","; \
@@ -697,19 +703,22 @@ _format: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		ran_languages="$${ran_languages}\"go\","; \
-		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$go_files" ]; then \
-			gofumpt -d . || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping go format: no .go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			go_files=$$(find "$$go_root" -name '*.go' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' 2>/dev/null); \
+			if [ -n "$$go_files" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && gofumpt -d .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go format: no .go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
 		while IFS= read -r js_root; do \
@@ -730,19 +739,22 @@ _format: _plugins-load
 		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		ran_languages="$${ran_languages}\"rust\","; \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ]; then \
-			cargo fmt --all -- --check || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping rust format: no .rs files found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo fmt --all -- --check) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust format: no .rs files found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		ran_languages="$${ran_languages}\"swift\","; \
@@ -862,19 +874,22 @@ _fix: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		ran_languages="$${ran_languages}\"go\","; \
-		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$go_files" ]; then \
-			gofumpt -w . || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping go fix: no .go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			go_files=$$(find "$$go_root" -name '*.go' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' 2>/dev/null); \
+			if [ -n "$$go_files" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && gofumpt -w .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go fix: no .go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
 		while IFS= read -r js_root; do \
@@ -895,19 +910,22 @@ _fix: _plugins-load
 		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		ran_languages="$${ran_languages}\"rust\","; \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ]; then \
-			cargo fmt --all || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping rust fix: no .rs files found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo fmt --all) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust fix: no .rs files found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		ran_languages="$${ran_languages}\"swift\","; \
@@ -1066,19 +1084,22 @@ _test: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		if find . -name '*_test.go' -not -path './.git/*' -not -path './vendor/*' 2>/dev/null | grep -q .; then \
-			ran_languages="$${ran_languages}\"go\","; \
-			go test ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"go\","; \
-			echo '{"level":"info","msg":"skipping go tests: no *_test.go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			if find "$$go_root" -name '*_test.go' -not -path '*/.git/*' -not -path '*/vendor/*' 2>/dev/null | grep -q .; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && go test ./...) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$go_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go tests: no *_test.go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
 		while IFS= read -r js_root; do \
@@ -1103,20 +1124,23 @@ _test: _plugins-load
 		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ] && [ -f "Cargo.toml" ]; then \
-			ran_languages="$${ran_languages}\"rust\","; \
-			cargo test --all-targets || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"rust\","; \
-			echo '{"level":"info","msg":"skipping rust tests: no .rs files or Cargo.toml found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ] && [ -f "$$rust_root/Cargo.toml" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo test --all-targets) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$rust_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust tests: no .rs files or Cargo.toml found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		swift_files=$$(find . -name '*.swift' -not -path './.git/*' -not -path './.build/*' -not -path './DerivedData/*' 2>/dev/null); \
@@ -1247,19 +1271,22 @@ _security: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		if [ -f "go.sum" ]; then \
-			ran_languages="$${ran_languages}\"go\","; \
-			govulncheck ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go:govulncheck\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"go\","; \
-			echo '{"level":"info","msg":"skipping govulncheck: no go.sum found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			if [ -f "$$go_root/go.sum" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && govulncheck ./...) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag:govulncheck\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$go_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping govulncheck: no go.sum found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
 		while IFS= read -r js_root; do \
@@ -1280,30 +1307,33 @@ _security: _plugins-load
 		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		if [ -f "Cargo.lock" ]; then \
-			ran_languages="$${ran_languages}\"rust\","; \
-			cargo audit || { overall_exit=1; failed_languages="$${failed_languages}\"rust:cargo-audit\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"rust:cargo-audit\","; \
-			echo '{"level":"info","msg":"skipping cargo audit: no Cargo.lock found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
-		if [ -f "deny.toml" ]; then \
-			cargo deny check || { overall_exit=1; failed_languages="$${failed_languages}\"rust:cargo-deny\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping cargo deny: no deny.toml found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			if [ -f "$$rust_root/Cargo.lock" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo audit) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag:cargo-audit\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$rust_tag:cargo-audit\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping cargo audit: no Cargo.lock found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+			if [ -f "$$rust_root/deny.toml" ]; then \
+				(cd "$$rust_root" && cargo deny check) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag:cargo-deny\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping cargo deny: no deny.toml found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		skipped_languages="$${skipped_languages}\"swift\","; \

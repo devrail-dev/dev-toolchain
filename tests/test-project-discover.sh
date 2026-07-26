@@ -17,6 +17,11 @@
 #      discovery (frontend/tsconfig.json + vite.config.ts `@` alias) — and
 #      tag per-root failures/skips (e.g. "python:api:bandit") the same way
 #      lint does.
+#   7. (Story 15.3) discover_project_roots go/rust and full make _lint/
+#      _test against real Go/Rust monorepo fixtures — proving this story
+#      actually fixes the reproduced pre-existing failures
+#      ("directory prefix . does not contain main module", "could not
+#      find Cargo.toml") rather than just not crashing.
 #
 # Fixtures are copied into a disposable $WORKDIR before any `make` target
 # runs against them (never bind-mounted read-write directly) — running a
@@ -172,6 +177,36 @@ assert_eq '["python"]' "$(printf '%s' "$SINGLE_FORMAT_SUMMARY" | jq -c '.languag
 
 SINGLE_SECURITY_SUMMARY=$(run_target single-root-python security)
 assert_eq '["python:bandit"]' "$(printf '%s' "$SINGLE_SECURITY_SUMMARY" | jq -c '.failed')" "single-root/security-failed-unqualified"
+
+echo "==> Unit (Story 15.3): go-monorepo/rust-monorepo — go/rust resolve to services/api"
+assert_eq "services/api" "$(discover go-monorepo go)" "go-monorepo/go"
+assert_eq "services/api" "$(discover rust-monorepo rust)" "rust-monorepo/rust"
+
+echo "==> Unit (Story 15.3): go-single-root/rust-single-root — resolve to '.' (regression safety)"
+assert_eq "." "$(discover go-single-root go)" "go-single-root/go"
+assert_eq "." "$(discover rust-single-root rust)" "rust-single-root/rust"
+
+echo "==> Integration (Story 15.3): make _lint/_test on go-monorepo — fixes the reproduced 'directory prefix . does not contain main module' failure"
+GO_LINT_SUMMARY=$(run_target go-monorepo lint)
+assert_eq "pass" "$(printf '%s' "$GO_LINT_SUMMARY" | jq -r '.status')" "go-monorepo/lint-status"
+assert_eq '["go:services/api"]' "$(printf '%s' "$GO_LINT_SUMMARY" | jq -c '.languages')" "go-monorepo/lint-languages-tagged-by-root"
+GO_TEST_SUMMARY=$(run_target go-monorepo test)
+assert_eq "pass" "$(printf '%s' "$GO_TEST_SUMMARY" | jq -r '.status')" "go-monorepo/test-status"
+assert_eq '["go:services/api"]' "$(printf '%s' "$GO_TEST_SUMMARY" | jq -c '.languages')" "go-monorepo/test-languages-tagged-by-root"
+
+echo "==> Integration (Story 15.3): make _lint/_test on rust-monorepo — fixes the reproduced 'could not find Cargo.toml' failure"
+RUST_LINT_SUMMARY=$(run_target rust-monorepo lint)
+assert_eq "pass" "$(printf '%s' "$RUST_LINT_SUMMARY" | jq -r '.status')" "rust-monorepo/lint-status"
+assert_eq '["rust:services/api"]' "$(printf '%s' "$RUST_LINT_SUMMARY" | jq -c '.languages')" "rust-monorepo/lint-languages-tagged-by-root"
+RUST_TEST_SUMMARY=$(run_target rust-monorepo test)
+assert_eq "pass" "$(printf '%s' "$RUST_TEST_SUMMARY" | jq -r '.status')" "rust-monorepo/test-status"
+assert_eq '["rust:services/api"]' "$(printf '%s' "$RUST_TEST_SUMMARY" | jq -c '.languages')" "rust-monorepo/test-languages-tagged-by-root"
+
+echo "==> Integration (Story 15.3): go-single-root/rust-single-root — byte-identical unqualified tags (AC 4)"
+GO_SINGLE_LINT_SUMMARY=$(run_target go-single-root lint)
+assert_eq '["go"]' "$(printf '%s' "$GO_SINGLE_LINT_SUMMARY" | jq -c '.languages')" "go-single-root/lint-languages-unqualified"
+RUST_SINGLE_LINT_SUMMARY=$(run_target rust-single-root lint)
+assert_eq '["rust"]' "$(printf '%s' "$RUST_SINGLE_LINT_SUMMARY" | jq -c '.languages')" "rust-single-root/lint-languages-unqualified"
 
 echo ""
 echo "==================================="

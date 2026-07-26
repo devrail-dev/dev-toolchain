@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test.setup` overrides. Container image now ships `uv`. A failed install
   fails `make test` immediately — the test suite never runs against a
   broken install. Projects with no lockfile/manifest are unaffected.
+- **Issue #53 (Story 15.3):** extends Story 15.1's project-root discovery
+  to Go (`go.mod`) and Rust (`Cargo.toml`) — `go test`, `golangci-lint`,
+  `cargo test`, `cargo clippy`, and `cargo fmt` previously failed outright
+  ("directory prefix . does not contain main module", "could not find
+  Cargo.toml") for a monorepo module not rooted at the repo root; they
+  now run with cwd set to the discovered module root, same as Python/JS.
+  Ansible needed no equivalent change — `ansible-lint` already discovers
+  playbooks recursively regardless of cwd.
 
 ## [1.12.0] - 2026-05-30
 

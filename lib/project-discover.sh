@@ -27,12 +27,16 @@
 #         when no per-project signal existed; Story 15.1 AC 4).
 #       * otherwise — output is every directory containing a manifest (the
 #         true monorepo case; Story 15.1 AC 1/AC 7).
-#   - Excludes .git, node_modules, vendor, .venv, venv, dist, build,
+#   - Excludes .git, node_modules, vendor, .venv, venv, dist, build, target,
 #     .terraform subtrees (mirrors the per-language find excludes already
 #     used in _lint/_format/_fix).
 #
-# Supported languages: python, javascript. Any other language returns "."
-# with a warning — extending autodetection to go/rust/ansible is Story 15.3.
+# Supported languages: python, javascript, go, rust (Story 15.3). Ansible
+# was evaluated for Story 15.3 and explicitly excluded — ansible-lint
+# already recursively discovers playbooks from cwd regardless of where
+# they live, with no root-marker file needed the way go.mod/Cargo.toml
+# are for their respective toolchains; there is nothing here for it to
+# autodetect. Any other language returns "." with a warning.
 #
 # Dependencies: lib/log.sh (log_warn), yq (v4+), bash 5+, coreutils (find)
 
@@ -52,6 +56,7 @@ _PROJECT_DISCOVER_FIND_EXCLUDES=(
   -not -path './venv/*'
   -not -path './dist/*'
   -not -path './build/*'
+  -not -path './target/*'
   -not -path './.terraform/*'
 )
 
@@ -107,6 +112,27 @@ _project_discover_autodetect_javascript() {
     _project_discover_normalize
 }
 
+# _project_discover_autodetect_go finds directories containing a go.mod.
+_project_discover_autodetect_go() {
+  find . -name 'go.mod' \
+    "${_PROJECT_DISCOVER_FIND_EXCLUDES[@]}" -print0 2>/dev/null |
+    xargs -0 -I{} dirname {} |
+    sort -u |
+    sed 's#^\./##' |
+    _project_discover_normalize
+}
+
+# _project_discover_autodetect_rust finds directories containing a
+# Cargo.toml.
+_project_discover_autodetect_rust() {
+  find . -name 'Cargo.toml' \
+    "${_PROJECT_DISCOVER_FIND_EXCLUDES[@]}" -print0 2>/dev/null |
+    xargs -0 -I{} dirname {} |
+    sort -u |
+    sed 's#^\./##' |
+    _project_discover_normalize
+}
+
 # discover_project_roots <language> emits newline-separated project root
 # paths for the given language. Never empty — see _project_discover_normalize.
 discover_project_roots() {
@@ -126,6 +152,8 @@ discover_project_roots() {
   case "${language}" in
   python) _project_discover_autodetect_python ;;
   javascript) _project_discover_autodetect_javascript ;;
+  go) _project_discover_autodetect_go ;;
+  rust) _project_discover_autodetect_rust ;;
   *)
     log_warn "discover_project_roots: no autodetection rule for language '${language}'"
     printf '.\n'
