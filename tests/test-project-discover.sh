@@ -18,10 +18,14 @@
 #      tag per-root failures/skips (e.g. "python:api:bandit") the same way
 #      lint does.
 #   7. (Story 15.3) discover_project_roots go/rust and full make _lint/
-#      _test against real Go/Rust monorepo fixtures — proving this story
-#      actually fixes the reproduced pre-existing failures
-#      ("directory prefix . does not contain main module", "could not
-#      find Cargo.toml") rather than just not crashing.
+#      _format/_fix/_test/_security against real Go/Rust monorepo and
+#      multi-root fixtures — proving this story actually fixes the
+#      reproduced pre-existing failures ("directory prefix . does not
+#      contain main module", "could not find Cargo.toml") rather than
+#      just not crashing, and that multiple module roots run and tag
+#      independently (AC 7 — added during code-review; the first pass
+#      only covered single-nested-module lint/test, mirroring the exact
+#      class of gap Story 15.1's own review caught).
 #
 # Fixtures are copied into a disposable $WORKDIR before any `make` target
 # runs against them (never bind-mounted read-write directly) — running a
@@ -207,6 +211,31 @@ GO_SINGLE_LINT_SUMMARY=$(run_target go-single-root lint)
 assert_eq '["go"]' "$(printf '%s' "$GO_SINGLE_LINT_SUMMARY" | jq -c '.languages')" "go-single-root/lint-languages-unqualified"
 RUST_SINGLE_LINT_SUMMARY=$(run_target rust-single-root lint)
 assert_eq '["rust"]' "$(printf '%s' "$RUST_SINGLE_LINT_SUMMARY" | jq -c '.languages')" "rust-single-root/lint-languages-unqualified"
+
+echo "==> Integration (Story 15.3): go-multi-root/rust-multi-root — two roots, run and tagged independently (AC 7 — code-review finding, was untested)"
+GO_MULTI_TEST_SUMMARY=$(run_target go-multi-root test)
+assert_eq "pass" "$(printf '%s' "$GO_MULTI_TEST_SUMMARY" | jq -r '.status')" "go-multi-root/test-status"
+assert_eq '["go:services/a","go:services/b"]' "$(printf '%s' "$GO_MULTI_TEST_SUMMARY" | jq -c '.languages')" "go-multi-root/test-languages-tagged-per-root"
+RUST_MULTI_TEST_SUMMARY=$(run_target rust-multi-root test)
+assert_eq "pass" "$(printf '%s' "$RUST_MULTI_TEST_SUMMARY" | jq -r '.status')" "rust-multi-root/test-status"
+assert_eq '["rust:services/a","rust:services/b"]' "$(printf '%s' "$RUST_MULTI_TEST_SUMMARY" | jq -c '.languages')" "rust-multi-root/test-languages-tagged-per-root"
+
+echo "==> Integration (Story 15.3): go-monorepo/rust-monorepo — _format/_fix/_security (code-review finding: only _lint/_test were covered)"
+GO_FORMAT_SUMMARY=$(run_target go-monorepo format)
+assert_eq "pass" "$(printf '%s' "$GO_FORMAT_SUMMARY" | jq -r '.status')" "go-monorepo/format-status"
+GO_FIX_SUMMARY=$(run_target go-monorepo fix)
+assert_eq "pass" "$(printf '%s' "$GO_FIX_SUMMARY" | jq -r '.status')" "go-monorepo/fix-status"
+GO_SECURITY_SUMMARY=$(run_target go-monorepo security)
+assert_eq "skip" "$(printf '%s' "$GO_SECURITY_SUMMARY" | jq -r '.status')" "go-monorepo/security-status"
+assert_eq '["go:services/api"]' "$(printf '%s' "$GO_SECURITY_SUMMARY" | jq -c '.skipped')" "go-monorepo/security-skipped-tagged-by-root"
+
+RUST_FORMAT_SUMMARY=$(run_target rust-monorepo format)
+assert_eq "pass" "$(printf '%s' "$RUST_FORMAT_SUMMARY" | jq -r '.status')" "rust-monorepo/format-status"
+RUST_FIX_SUMMARY=$(run_target rust-monorepo fix)
+assert_eq "pass" "$(printf '%s' "$RUST_FIX_SUMMARY" | jq -r '.status')" "rust-monorepo/fix-status"
+RUST_SECURITY_SUMMARY=$(run_target rust-monorepo security)
+assert_eq "pass" "$(printf '%s' "$RUST_SECURITY_SUMMARY" | jq -r '.status')" "rust-monorepo/security-status"
+assert_eq '["rust:services/api"]' "$(printf '%s' "$RUST_SECURITY_SUMMARY" | jq -c '.languages')" "rust-monorepo/security-languages-tagged-by-root"
 
 echo ""
 echo "==================================="
