@@ -76,6 +76,16 @@ DEVRAIL_DOCKER_NETWORK := $(shell yq -r '.docker_network // ""' $(DEVRAIL_CONFIG
 DEVRAIL_NETWORK_FLAG   := $(if $(DEVRAIL_DOCKER_NETWORK),--network $(DEVRAIL_DOCKER_NETWORK),)
 DEVRAIL_VOLUME_FLAGS   := $(shell yq -r '.docker_volumes // [] | .[] | "-v " + .' $(DEVRAIL_CONFIG) 2>/dev/null)
 
+# Story 15.4: test.services ephemeral containers. Recursively-expanded (=,
+# not :=) so these re-evaluate on every DOCKER_RUN expansion — picking up
+# the network/env-file that `_test-services-up` (a host-side prerequisite
+# of `test:` only) writes under .devrail/test-services/, mirroring the
+# DEVRAIL_RESOLVED_IMAGE / _extended-image pattern. A true no-op for every
+# target except `test`: nothing else depends on _test-services-up, so
+# these files never exist for lint/format/fix/security/scan/docs/etc.
+DEVRAIL_TEST_SERVICES_NETWORK_FLAG = $(if $(wildcard .devrail/test-services/network),--network $(shell cat .devrail/test-services/network),)
+DEVRAIL_TEST_SERVICES_ENV_FLAG     = $(if $(wildcard .devrail/test-services/env),--env-file .devrail/test-services/env,)
+
 # Ruby lint/format scope. Defaults to the conventional Rails directory set so
 # rubocop and reek do not descend into vendor/bundle/ (which can hold tens of
 # thousands of files of installed gem source). Override per-project via:
@@ -129,6 +139,8 @@ DOCKER_RUN = docker run --rm \
 	$(RUBY_DOCKER_ENV) \
 	$(DEVRAIL_NETWORK_FLAG) \
 	$(DEVRAIL_VOLUME_FLAGS) \
+	$(DEVRAIL_TEST_SERVICES_NETWORK_FLAG) \
+	$(DEVRAIL_TEST_SERVICES_ENV_FLAG) \
 	$(DEVRAIL_RESOLVED_IMAGE)
 
 .DEFAULT_GOAL := help
@@ -137,7 +149,7 @@ DOCKER_RUN = docker run --rm \
 # .PHONY declarations
 # ---------------------------------------------------------------------------
 .PHONY: help build lint format fix test security scan docs changelog check install-hooks init release plugins-update
-.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify _ensure-host-cache _generate-dockerfile _extended-image _devrail-host-bin
+.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify _ensure-host-cache _generate-dockerfile _extended-image _devrail-host-bin _test-services-up
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
@@ -209,6 +221,50 @@ _extended-image: _ensure-host-cache _devrail-host-bin
 		rm -f .devrail/extended-image-tag; \
 	fi
 
+# --- _test-services-host-bin: extract test-services.sh + lib/log.sh from container ---
+# Story 15.4: consumer template repos inherit this Makefile but not
+# scripts/, mirroring _devrail-host-bin's pattern exactly (same cache
+# file, same docker create/cp/rm shape). When the dev-toolchain repo
+# itself runs (scripts/ present locally) we use the on-disk copy so
+# changes take effect without a rebuild. Otherwise extract from the
+# resolved core image to .devrail/host-bin/.
+_test-services-host-bin:
+	@if [ -f scripts/test-services.sh ]; then \
+		exit 0; \
+	fi; \
+	expected="$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)"; \
+	cached=$$(cat .devrail/host-bin/.image-tag 2>/dev/null || true); \
+	if [ "$$cached" = "$$expected" ] && \
+	   [ -f .devrail/host-bin/scripts/test-services.sh ] && \
+	   [ -f .devrail/host-bin/lib/log.sh ]; then \
+		exit 0; \
+	fi; \
+	mkdir -p .devrail/host-bin/scripts .devrail/host-bin/lib; \
+	echo '{"level":"info","msg":"extracting test-services orchestrator from container","image":"'"$$expected"'","language":"_test-services"}' >&2; \
+	cid=$$(docker create "$$expected" /bin/true) || { \
+		echo '{"level":"error","msg":"docker create failed for host-bin extraction","image":"'"$$expected"'","language":"_test-services"}' >&2; \
+		exit 2; \
+	}; \
+	trap 'docker rm "$$cid" >/dev/null 2>&1 || true' EXIT; \
+	docker cp "$$cid":/opt/devrail/scripts/test-services.sh .devrail/host-bin/scripts/test-services.sh && \
+	docker cp "$$cid":/opt/devrail/lib/log.sh                .devrail/host-bin/lib/log.sh && \
+	chmod +x .devrail/host-bin/scripts/test-services.sh && \
+	printf '%s\n' "$$expected" > .devrail/host-bin/.image-tag
+
+# --- _test-services-up: start declared test.services before `make test` ---
+# Story 15.4: HOST-side target, `test:`-only prerequisite. No-op (fast —
+# a single yq read) when .devrail.yml has no `test.services`. When
+# services ARE declared, starts them and writes network/env state under
+# .devrail/test-services/ for DEVRAIL_TEST_SERVICES_NETWORK_FLAG/
+# DEVRAIL_TEST_SERVICES_ENV_FLAG to pick up.
+_test-services-up: _ensure-host-cache _test-services-host-bin
+	@if [ -f scripts/test-services.sh ]; then \
+		bash scripts/test-services.sh up; \
+	else \
+		DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" \
+			bash .devrail/host-bin/scripts/test-services.sh up; \
+	fi
+
 help: ## Show this help
 	@echo "DevRail dev-toolchain — container image build and validation"
 	@echo ""
@@ -277,7 +333,14 @@ scan: _ensure-host-cache _extended-image ## Run universal scanners (trivy, gitle
 security: _ensure-host-cache _extended-image ## Run language-specific security scanners
 	$(DOCKER_RUN) make _security
 
-test: _ensure-host-cache _extended-image ## Run validation tests
+test: _ensure-host-cache _extended-image _test-services-up ## Run validation tests
+	@trap '\
+		if [ -f scripts/test-services.sh ]; then \
+			bash scripts/test-services.sh down; \
+		else \
+			DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" bash .devrail/host-bin/scripts/test-services.sh down; \
+		fi \
+	' EXIT; \
 	$(DOCKER_RUN) make _test
 
 # ===========================================================================

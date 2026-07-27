@@ -1,0 +1,6 @@
+languages:
+  - python
+test:
+  services:
+    - postgres:16
+    - redis:7

@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now run with cwd set to the discovered module root, same as Python/JS.
   Ansible needed no equivalent change — `ansible-lint` already discovers
   playbooks recursively regardless of cwd.
+- **Issue #52 (Story 15.4):** `.devrail.yml` `test.services` starts
+  throwaway `postgres:<tag>`/`redis:<tag>` containers before `make test`
+  and tears them down afterward (pass or fail), injecting `DATABASE_URL`/
+  `REDIS_URL`. Orchestration is entirely host-side — the toolchain
+  container has no `docker` CLI or socket access, deliberately — via a
+  new `_test-services-up` host prerequisite (mirroring `_extended-image`'s
+  pattern) feeding into the existing `docker_network`/`env` plumbing
+  (issue #48). `test.services` and `docker_network` are mutually
+  exclusive. A `SIGKILL`'d run can leave orphaned containers/network
+  behind (a shell trap can't catch `SIGKILL`); the next `make test` run
+  detects and cleans up stale state automatically. Projects with no
+  `test.services` declared are unaffected.
 
 ## [1.12.0] - 2026-05-30
 

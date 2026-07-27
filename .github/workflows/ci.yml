@@ -86,6 +86,23 @@ jobs:
           DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
           DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
 
+      # Story 15.4: Ephemeral test.services smoke test (issue #52)
+      # Verifies scripts/test-services.sh: postgres/redis alone and
+      # together (real queries through the injected DATABASE_URL/
+      # REDIS_URL), no-services regression, docker_network mutual
+      # exclusion, unsupported-entry error, and — critically — that
+      # teardown actually happens, including after a mid-flight SIGKILL
+      # (checked via `docker ps`/`docker network ls`, not just by reading
+      # the trap code). Runs `make test` directly on the runner (this is
+      # host-side orchestration, not something a bind-mounted container
+      # invocation can exercise), so it needs Docker-in-Docker — already
+      # available here since every other step in this job uses it.
+      - name: Test services smoke test
+        run: bash tests/test-test-services.sh
+        env:
+          DEVRAIL_IMAGE: ${{ env.IMAGE_NAME }}
+          DEVRAIL_TAG: ${{ env.IMAGE_TAG }}
+
       # Phase 2e: Plugin resolver + lockfile smoke test (Story 13.3)
       # Drives `make plugins-update` against a local-filesystem git fixture
       # (no network) covering: SHA passthrough, tag→SHA, branch rejection,
