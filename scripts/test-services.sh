@@ -151,8 +151,13 @@ _up() {
     exit 2
   fi
 
-  # Validate the full list before starting anything.
-  local service kind
+  # Validate the full list before starting anything: every entry must be a
+  # supported kind, and no kind may repeat. A repeat would silently shadow
+  # itself — DATABASE_URL/REDIS_URL is one env var per kind, so a second
+  # postgres entry's connection string would overwrite the first's in the
+  # env file (last line wins), leaving the first container running but
+  # unreachable via the injected env var for the rest of the test run.
+  local service kind seen_kinds=""
   while IFS= read -r service; do
     [[ -z "${service}" ]] && continue
     kind="$(_service_kind "${service}")"
@@ -160,6 +165,11 @@ _up() {
       log_error "unsupported test.services entry '${service}' — only postgres:<tag> and redis:<tag> are supported" 2
       exit 2
     fi
+    if [[ " ${seen_kinds} " == *" ${kind} "* ]]; then
+      log_error "duplicate test.services entry for '${kind}' — only one ${kind}:<tag> entry is supported at a time" 2
+      exit 2
+    fi
+    seen_kinds="${seen_kinds} ${kind}"
   done <<<"${services}"
 
   mkdir -p "${STATE_DIR}"

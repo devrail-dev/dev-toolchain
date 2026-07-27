@@ -76,6 +76,15 @@ DEVRAIL_DOCKER_NETWORK := $(shell yq -r '.docker_network // ""' $(DEVRAIL_CONFIG
 DEVRAIL_NETWORK_FLAG   := $(if $(DEVRAIL_DOCKER_NETWORK),--network $(DEVRAIL_DOCKER_NETWORK),)
 DEVRAIL_VOLUME_FLAGS   := $(shell yq -r '.docker_volumes // [] | .[] | "-v " + .' $(DEVRAIL_CONFIG) 2>/dev/null)
 
+# HAS_TEST_SERVICES_DECLARED — set when .devrail.yml has a non-empty
+# `test.services` list. Mirrors HAS_PLUGINS_DECLARED above: guards
+# `_test-services-host-bin`'s extraction AND `_test-services-up`'s
+# invocation so a consumer repo that never declares test.services (the
+# common case) pays neither the docker create/cp/rm extraction cost nor
+# risks invoking a script that was never extracted.
+DEVRAIL_TEST_SERVICES_PROBE   := $(shell yq -r '.test.services // [] | length' $(DEVRAIL_CONFIG) 2>/dev/null)
+HAS_TEST_SERVICES_DECLARED    := $(if $(filter-out 0,$(DEVRAIL_TEST_SERVICES_PROBE)),yes,)
+
 # Story 15.4: test.services ephemeral containers. Recursively-expanded (=,
 # not :=) so these re-evaluate on every DOCKER_RUN expansion — picking up
 # the network/env-file that `_test-services-up` (a host-side prerequisite
@@ -224,12 +233,17 @@ _extended-image: _ensure-host-cache _devrail-host-bin
 # --- _test-services-host-bin: extract test-services.sh + lib/log.sh from container ---
 # Story 15.4: consumer template repos inherit this Makefile but not
 # scripts/, mirroring _devrail-host-bin's pattern exactly (same cache
-# file, same docker create/cp/rm shape). When the dev-toolchain repo
-# itself runs (scripts/ present locally) we use the on-disk copy so
-# changes take effect without a rebuild. Otherwise extract from the
-# resolved core image to .devrail/host-bin/.
+# file, same docker create/cp/rm shape, same HAS_*_DECLARED upfront guard
+# so a repo that never declares test.services — the common case — pays
+# no docker create/cp/rm cost at all, not even once per image tag).
+# When the dev-toolchain repo itself runs (scripts/ present locally) we
+# use the on-disk copy so changes take effect without a rebuild.
+# Otherwise extract from the resolved core image to .devrail/host-bin/.
 _test-services-host-bin:
-	@if [ -f scripts/test-services.sh ]; then \
+	@if [ -z "$(HAS_TEST_SERVICES_DECLARED)" ]; then \
+		exit 0; \
+	fi; \
+	if [ -f scripts/test-services.sh ]; then \
 		exit 0; \
 	fi; \
 	expected="$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)"; \
@@ -260,6 +274,8 @@ _test-services-host-bin:
 _test-services-up: _ensure-host-cache _test-services-host-bin
 	@if [ -f scripts/test-services.sh ]; then \
 		bash scripts/test-services.sh up; \
+	elif [ -z "$(HAS_TEST_SERVICES_DECLARED)" ]; then \
+		exit 0; \
 	else \
 		DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" \
 			bash .devrail/host-bin/scripts/test-services.sh up; \
@@ -337,7 +353,7 @@ test: _ensure-host-cache _extended-image _test-services-up ## Run validation tes
 	@trap '\
 		if [ -f scripts/test-services.sh ]; then \
 			bash scripts/test-services.sh down; \
-		else \
+		elif [ -f .devrail/host-bin/scripts/test-services.sh ]; then \
 			DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" bash .devrail/host-bin/scripts/test-services.sh down; \
 		fi \
 	' EXIT; \
