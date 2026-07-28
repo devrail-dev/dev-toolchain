@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Issue #53 (Story 15.1):** `make lint`/`format`/`fix`/`test`/`security`
+  now autodetect per-language project roots in Python+JS monorepos (e.g.
+  `api/pyproject.toml` + `frontend/package.json`, no manifests at repo
+  root) and run each language's tools with cwd set there, so local config
+  (`tsconfig.json`, `vite.config.ts` path aliases, `pyproject.toml`)
+  resolves correctly. New `lib/project-discover.sh` helper; optional
+  `.devrail.yml` `projects:` override for layouts autodetection can't
+  infer. Single-root projects (the common case) are unaffected — output
+  is byte-identical to previous versions.
+- **Issue #52 (Story 15.2):** `make test` now installs a project's own
+  dependencies before running `pytest`/`vitest`, so tests no longer fail
+  at import time with `ModuleNotFoundError`/unresolved-import errors.
+  Autodetects `uv.lock` (`uv export | uv pip install --system`),
+  `requirements*.txt` (`pip install -r`), or `pyproject.toml`/`setup.py`
+  (`pip install -e .`) for Python, and `package-lock.json` (`npm ci`) for
+  JS/TS, in each project root discovered by Story 15.1. New
+  `lib/dependency-install.sh` helper; new `.devrail.yml` `test.install`/
+  `test.setup` overrides. Container image now ships `uv`. A failed install
+  fails `make test` immediately — the test suite never runs against a
+  broken install. Projects with no lockfile/manifest are unaffected.
+- **Issue #53 (Story 15.3):** extends Story 15.1's project-root discovery
+  to Go (`go.mod`) and Rust (`Cargo.toml`) — `go test`, `golangci-lint`,
+  `cargo test`, `cargo clippy`, and `cargo fmt` previously failed outright
+  ("directory prefix . does not contain main module", "could not find
+  Cargo.toml") for a monorepo module not rooted at the repo root; they
+  now run with cwd set to the discovered module root, same as Python/JS.
+  Ansible needed no equivalent change — `ansible-lint` already discovers
+  playbooks recursively regardless of cwd.
+- **Issue #52 (Story 15.4):** `.devrail.yml` `test.services` starts
+  throwaway `postgres:<tag>`/`redis:<tag>` containers before `make test`
+  and tears them down afterward (pass or fail), injecting `DATABASE_URL`/
+  `REDIS_URL`. Orchestration is entirely host-side — the toolchain
+  container has no `docker` CLI or socket access, deliberately — via a
+  new `_test-services-up` host prerequisite (mirroring `_extended-image`'s
+  pattern) feeding into the existing `docker_network`/`env` plumbing
+  (issue #48). `test.services` and `docker_network` are mutually
+  exclusive. A `SIGKILL`'d run can leave orphaned containers/network
+  behind (a shell trap can't catch `SIGKILL`); the next `make test` run
+  detects and cleans up stale state automatically. Projects with no
+  `test.services` declared are unaffected.
+
 ## [1.12.0] - 2026-05-30
 
 ### Added

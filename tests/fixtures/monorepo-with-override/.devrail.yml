@@ -1,0 +1,5 @@
+languages:
+  - python
+projects:
+  - path: custom-py-dir
+    languages: [python]

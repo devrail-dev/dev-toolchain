@@ -76,6 +76,25 @@ DEVRAIL_DOCKER_NETWORK := $(shell yq -r '.docker_network // ""' $(DEVRAIL_CONFIG
 DEVRAIL_NETWORK_FLAG   := $(if $(DEVRAIL_DOCKER_NETWORK),--network $(DEVRAIL_DOCKER_NETWORK),)
 DEVRAIL_VOLUME_FLAGS   := $(shell yq -r '.docker_volumes // [] | .[] | "-v " + .' $(DEVRAIL_CONFIG) 2>/dev/null)
 
+# HAS_TEST_SERVICES_DECLARED — set when .devrail.yml has a non-empty
+# `test.services` list. Mirrors HAS_PLUGINS_DECLARED above: guards
+# `_test-services-host-bin`'s extraction AND `_test-services-up`'s
+# invocation so a consumer repo that never declares test.services (the
+# common case) pays neither the docker create/cp/rm extraction cost nor
+# risks invoking a script that was never extracted.
+DEVRAIL_TEST_SERVICES_PROBE   := $(shell yq -r '.test.services // [] | length' $(DEVRAIL_CONFIG) 2>/dev/null)
+HAS_TEST_SERVICES_DECLARED    := $(if $(filter-out 0,$(DEVRAIL_TEST_SERVICES_PROBE)),yes,)
+
+# Story 15.4: test.services ephemeral containers. Recursively-expanded (=,
+# not :=) so these re-evaluate on every DOCKER_RUN expansion — picking up
+# the network/env-file that `_test-services-up` (a host-side prerequisite
+# of `test:` only) writes under .devrail/test-services/, mirroring the
+# DEVRAIL_RESOLVED_IMAGE / _extended-image pattern. A true no-op for every
+# target except `test`: nothing else depends on _test-services-up, so
+# these files never exist for lint/format/fix/security/scan/docs/etc.
+DEVRAIL_TEST_SERVICES_NETWORK_FLAG = $(if $(wildcard .devrail/test-services/network),--network $(shell cat .devrail/test-services/network),)
+DEVRAIL_TEST_SERVICES_ENV_FLAG     = $(if $(wildcard .devrail/test-services/env),--env-file .devrail/test-services/env,)
+
 # Ruby lint/format scope. Defaults to the conventional Rails directory set so
 # rubocop and reek do not descend into vendor/bundle/ (which can hold tens of
 # thousands of files of installed gem source). Override per-project via:
@@ -129,6 +148,8 @@ DOCKER_RUN = docker run --rm \
 	$(RUBY_DOCKER_ENV) \
 	$(DEVRAIL_NETWORK_FLAG) \
 	$(DEVRAIL_VOLUME_FLAGS) \
+	$(DEVRAIL_TEST_SERVICES_NETWORK_FLAG) \
+	$(DEVRAIL_TEST_SERVICES_ENV_FLAG) \
 	$(DEVRAIL_RESOLVED_IMAGE)
 
 .DEFAULT_GOAL := help
@@ -137,7 +158,7 @@ DOCKER_RUN = docker run --rm \
 # .PHONY declarations
 # ---------------------------------------------------------------------------
 .PHONY: help build lint format fix test security scan docs changelog check install-hooks init release plugins-update
-.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify _ensure-host-cache _generate-dockerfile _extended-image _devrail-host-bin
+.PHONY: _lint _format _fix _test _security _scan _docs _changelog _check _check-config _init _plugins-update _plugins-verify _ensure-host-cache _generate-dockerfile _extended-image _devrail-host-bin _test-services-up
 
 # ===========================================================================
 # Public targets (run on host, delegate to Docker container)
@@ -209,6 +230,57 @@ _extended-image: _ensure-host-cache _devrail-host-bin
 		rm -f .devrail/extended-image-tag; \
 	fi
 
+# --- _test-services-host-bin: extract test-services.sh + lib/log.sh from container ---
+# Story 15.4: consumer template repos inherit this Makefile but not
+# scripts/, mirroring _devrail-host-bin's pattern exactly (same cache
+# file, same docker create/cp/rm shape, same HAS_*_DECLARED upfront guard
+# so a repo that never declares test.services — the common case — pays
+# no docker create/cp/rm cost at all, not even once per image tag).
+# When the dev-toolchain repo itself runs (scripts/ present locally) we
+# use the on-disk copy so changes take effect without a rebuild.
+# Otherwise extract from the resolved core image to .devrail/host-bin/.
+_test-services-host-bin:
+	@if [ -z "$(HAS_TEST_SERVICES_DECLARED)" ]; then \
+		exit 0; \
+	fi; \
+	if [ -f scripts/test-services.sh ]; then \
+		exit 0; \
+	fi; \
+	expected="$(DEVRAIL_IMAGE):$(DEVRAIL_TAG)"; \
+	cached=$$(cat .devrail/host-bin/.image-tag 2>/dev/null || true); \
+	if [ "$$cached" = "$$expected" ] && \
+	   [ -f .devrail/host-bin/scripts/test-services.sh ] && \
+	   [ -f .devrail/host-bin/lib/log.sh ]; then \
+		exit 0; \
+	fi; \
+	mkdir -p .devrail/host-bin/scripts .devrail/host-bin/lib; \
+	echo '{"level":"info","msg":"extracting test-services orchestrator from container","image":"'"$$expected"'","language":"_test-services"}' >&2; \
+	cid=$$(docker create "$$expected" /bin/true) || { \
+		echo '{"level":"error","msg":"docker create failed for host-bin extraction","image":"'"$$expected"'","language":"_test-services"}' >&2; \
+		exit 2; \
+	}; \
+	trap 'docker rm "$$cid" >/dev/null 2>&1 || true' EXIT; \
+	docker cp "$$cid":/opt/devrail/scripts/test-services.sh .devrail/host-bin/scripts/test-services.sh && \
+	docker cp "$$cid":/opt/devrail/lib/log.sh                .devrail/host-bin/lib/log.sh && \
+	chmod +x .devrail/host-bin/scripts/test-services.sh && \
+	printf '%s\n' "$$expected" > .devrail/host-bin/.image-tag
+
+# --- _test-services-up: start declared test.services before `make test` ---
+# Story 15.4: HOST-side target, `test:`-only prerequisite. No-op (fast —
+# a single yq read) when .devrail.yml has no `test.services`. When
+# services ARE declared, starts them and writes network/env state under
+# .devrail/test-services/ for DEVRAIL_TEST_SERVICES_NETWORK_FLAG/
+# DEVRAIL_TEST_SERVICES_ENV_FLAG to pick up.
+_test-services-up: _ensure-host-cache _test-services-host-bin
+	@if [ -f scripts/test-services.sh ]; then \
+		bash scripts/test-services.sh up; \
+	elif [ -z "$(HAS_TEST_SERVICES_DECLARED)" ]; then \
+		exit 0; \
+	else \
+		DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" \
+			bash .devrail/host-bin/scripts/test-services.sh up; \
+	fi
+
 help: ## Show this help
 	@echo "DevRail dev-toolchain — container image build and validation"
 	@echo ""
@@ -277,7 +349,14 @@ scan: _ensure-host-cache _extended-image ## Run universal scanners (trivy, gitle
 security: _ensure-host-cache _extended-image ## Run language-specific security scanners
 	$(DOCKER_RUN) make _security
 
-test: _ensure-host-cache _extended-image ## Run validation tests
+test: _ensure-host-cache _extended-image _test-services-up ## Run validation tests
+	@trap '\
+		if [ -f scripts/test-services.sh ]; then \
+			bash scripts/test-services.sh down; \
+		elif [ -f .devrail/host-bin/scripts/test-services.sh ]; then \
+			DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" bash .devrail/host-bin/scripts/test-services.sh down; \
+		fi \
+	' EXIT; \
 	$(DOCKER_RUN) make _test
 
 # ===========================================================================
@@ -396,19 +475,23 @@ _plugins-load: _plugins-verify
 # call to keep behaviour symmetric with the per-language blocks.
 _lint: _plugins-load
 	@. /opt/devrail/lib/plugin-execute.sh; \
+	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/project-discover.sh"; \
 	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
 	if [ -n "$(HAS_PYTHON)" ]; then \
-		ran_languages="$${ran_languages}\"python\","; \
-		ruff check . || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r py_root; do \
+			if [ "$$py_root" = "." ]; then py_tag="python"; else py_tag="python:$$py_root"; fi; \
+			ran_languages="$${ran_languages}\"$$py_tag\","; \
+			(cd "$$py_root" && ruff check .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag\","; }; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots python); \
 	fi; \
 	if [ -n "$(HAS_BASH)" ]; then \
 		ran_languages="$${ran_languages}\"bash\","; \
@@ -496,60 +579,69 @@ _lint: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		ran_languages="$${ran_languages}\"go\","; \
-		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$go_files" ]; then \
-			golangci-lint run ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping go lint: no .go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			go_files=$$(find "$$go_root" -name '*.go' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' 2>/dev/null); \
+			if [ -n "$$go_files" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && golangci-lint run ./...) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go lint: no .go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
-		ran_languages="$${ran_languages}\"javascript\","; \
-		js_files=$$(find . \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.mjs' -o -name '*.cjs' \) -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' 2>/dev/null); \
-		if [ -n "$$js_files" ]; then \
-			eslint . || { overall_exit=1; failed_languages="$${failed_languages}\"javascript:eslint\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping javascript eslint lint: no JS/TS files found","language":"javascript"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
-		if [ -f "tsconfig.json" ]; then \
-			tsc --noEmit || { overall_exit=1; failed_languages="$${failed_languages}\"javascript:tsc\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping tsc type check: no tsconfig.json found","language":"javascript"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r js_root; do \
+			if [ "$$js_root" = "." ]; then js_tag="javascript"; else js_tag="javascript:$$js_root"; fi; \
+			ran_languages="$${ran_languages}\"$$js_tag\","; \
+			js_files=$$(find "$$js_root" \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.mjs' -o -name '*.cjs' \) -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null); \
+			if [ -n "$$js_files" ]; then \
+				(cd "$$js_root" && eslint .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag:eslint\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping javascript eslint lint: no JS/TS files found\",\"language\":\"javascript\",\"root\":\"$$js_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+			if [ -f "$$js_root/tsconfig.json" ]; then \
+				(cd "$$js_root" && tsc --noEmit) || { overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag:tsc\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping tsc type check: no tsconfig.json found\",\"language\":\"javascript\",\"root\":\"$$js_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		ran_languages="$${ran_languages}\"rust\","; \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ]; then \
-			cargo clippy --all-targets --all-features -- -D warnings || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping rust lint: no .rs files found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo clippy --all-targets --all-features -- -D warnings) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust lint: no .rs files found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"lint\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		ran_languages="$${ran_languages}\"swift\","; \
@@ -621,19 +713,23 @@ _lint: _plugins-load
 # --- _format: language-specific format checking ---
 _format: _plugins-load
 	@. /opt/devrail/lib/plugin-execute.sh; \
+	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/project-discover.sh"; \
 	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
 	if [ -n "$(HAS_PYTHON)" ]; then \
-		ran_languages="$${ran_languages}\"python\","; \
-		ruff format --check . || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r py_root; do \
+			if [ "$$py_root" = "." ]; then py_tag="python"; else py_tag="python:$$py_root"; fi; \
+			ran_languages="$${ran_languages}\"$$py_tag\","; \
+			(cd "$$py_root" && ruff format --check .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag\","; }; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots python); \
 	fi; \
 	if [ -n "$(HAS_BASH)" ]; then \
 		ran_languages="$${ran_languages}\"bash\","; \
@@ -686,49 +782,58 @@ _format: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		ran_languages="$${ran_languages}\"go\","; \
-		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$go_files" ]; then \
-			gofumpt -d . || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping go format: no .go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			go_files=$$(find "$$go_root" -name '*.go' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' 2>/dev/null); \
+			if [ -n "$$go_files" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && gofumpt -d .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go format: no .go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
-		ran_languages="$${ran_languages}\"javascript\","; \
-		js_files=$$(find . \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.mjs' -o -name '*.cjs' \) -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' 2>/dev/null); \
-		if [ -n "$$js_files" ]; then \
-			prettier --check . || { overall_exit=1; failed_languages="$${failed_languages}\"javascript\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping javascript format: no JS/TS files found","language":"javascript"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r js_root; do \
+			if [ "$$js_root" = "." ]; then js_tag="javascript"; else js_tag="javascript:$$js_root"; fi; \
+			ran_languages="$${ran_languages}\"$$js_tag\","; \
+			js_files=$$(find "$$js_root" \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.mjs' -o -name '*.cjs' \) -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null); \
+			if [ -n "$$js_files" ]; then \
+				(cd "$$js_root" && prettier --check .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping javascript format: no JS/TS files found\",\"language\":\"javascript\",\"root\":\"$$js_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		ran_languages="$${ran_languages}\"rust\","; \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ]; then \
-			cargo fmt --all -- --check || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping rust format: no .rs files found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo fmt --all -- --check) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust format: no .rs files found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"format\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		ran_languages="$${ran_languages}\"swift\","; \
@@ -779,19 +884,23 @@ _format: _plugins-load
 # --- _fix: language-specific format fixing (in-place) ---
 _fix: _plugins-load
 	@. /opt/devrail/lib/plugin-execute.sh; \
+	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/project-discover.sh"; \
 	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
 	if [ -n "$(HAS_PYTHON)" ]; then \
-		ran_languages="$${ran_languages}\"python\","; \
-		ruff format . || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r py_root; do \
+			if [ "$$py_root" = "." ]; then py_tag="python"; else py_tag="python:$$py_root"; fi; \
+			ran_languages="$${ran_languages}\"$$py_tag\","; \
+			(cd "$$py_root" && ruff format .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag\","; }; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots python); \
 	fi; \
 	if [ -n "$(HAS_BASH)" ]; then \
 		ran_languages="$${ran_languages}\"bash\","; \
@@ -844,49 +953,58 @@ _fix: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		ran_languages="$${ran_languages}\"go\","; \
-		go_files=$$(find . -name '*.go' -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' 2>/dev/null); \
-		if [ -n "$$go_files" ]; then \
-			gofumpt -w . || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping go fix: no .go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			go_files=$$(find "$$go_root" -name '*.go' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' 2>/dev/null); \
+			if [ -n "$$go_files" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && gofumpt -w .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go fix: no .go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
-		ran_languages="$${ran_languages}\"javascript\","; \
-		js_files=$$(find . \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.mjs' -o -name '*.cjs' \) -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' 2>/dev/null); \
-		if [ -n "$$js_files" ]; then \
-			prettier --write . || { overall_exit=1; failed_languages="$${failed_languages}\"javascript\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping javascript fix: no JS/TS files found","language":"javascript"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r js_root; do \
+			if [ "$$js_root" = "." ]; then js_tag="javascript"; else js_tag="javascript:$$js_root"; fi; \
+			ran_languages="$${ran_languages}\"$$js_tag\","; \
+			js_files=$$(find "$$js_root" \( -name '*.js' -o -name '*.jsx' -o -name '*.ts' -o -name '*.tsx' -o -name '*.mjs' -o -name '*.cjs' \) -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null); \
+			if [ -n "$$js_files" ]; then \
+				(cd "$$js_root" && prettier --write .) || { overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping javascript fix: no JS/TS files found\",\"language\":\"javascript\",\"root\":\"$$js_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		ran_languages="$${ran_languages}\"rust\","; \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ]; then \
-			cargo fmt --all || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping rust fix: no .rs files found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo fmt --all) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust fix: no .rs files found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"fix\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		ran_languages="$${ran_languages}\"swift\","; \
@@ -944,25 +1062,34 @@ _fix: _plugins-load
 # --- _test: language-specific test runners ---
 _test: _plugins-load
 	@. /opt/devrail/lib/plugin-execute.sh; \
+	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/project-discover.sh"; \
+	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/dependency-install.sh"; \
 	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
 	skipped_languages=""; \
 	if [ -n "$(HAS_PYTHON)" ]; then \
-		if [ -d "tests" ] || find . -name '*_test.py' -o -name 'test_*.py' 2>/dev/null | grep -q .; then \
-			ran_languages="$${ran_languages}\"python\","; \
-			pytest || { overall_exit=1; failed_languages="$${failed_languages}\"python\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"python\","; \
-			echo '{"level":"info","msg":"skipping python tests: no test files found","language":"python"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r py_root; do \
+			if [ "$$py_root" = "." ]; then py_tag="python"; else py_tag="python:$$py_root"; fi; \
+			if ! install_project_deps python "$$py_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag:install\","; \
+			elif ! run_project_setup "$$py_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag:setup\","; \
+			elif [ -d "$$py_root/tests" ] || find "$$py_root" -name '*_test.py' -o -name 'test_*.py' 2>/dev/null | grep -q .; then \
+				ran_languages="$${ran_languages}\"$$py_tag\","; \
+				(cd "$$py_root" && pytest) || { overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$py_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping python tests: no test files found\",\"language\":\"python\",\"root\":\"$$py_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots python); \
 	fi; \
 	if [ -n "$(HAS_BASH)" ]; then \
 		if find . -name '*.bats' -not -path './.git/*' 2>/dev/null | grep -q .; then \
@@ -1036,50 +1163,63 @@ _test: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		if find . -name '*_test.go' -not -path './.git/*' -not -path './vendor/*' 2>/dev/null | grep -q .; then \
-			ran_languages="$${ran_languages}\"go\","; \
-			go test ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"go\","; \
-			echo '{"level":"info","msg":"skipping go tests: no *_test.go files found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			if find "$$go_root" -name '*_test.go' -not -path '*/.git/*' -not -path '*/vendor/*' 2>/dev/null | grep -q .; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && go test ./...) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$go_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping go tests: no *_test.go files found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
-		if find . \( -name '*.test.*' -o -name '*.spec.*' \) -not -path './.git/*' -not -path './vendor/*' -not -path './node_modules/*' -not -path './dist/*' -not -path './build/*' 2>/dev/null | grep -q .; then \
-			ran_languages="$${ran_languages}\"javascript\","; \
-			vitest run || { overall_exit=1; failed_languages="$${failed_languages}\"javascript\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"javascript\","; \
-			echo '{"level":"info","msg":"skipping javascript tests: no *.test.* or *.spec.* files found","language":"javascript"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r js_root; do \
+			if [ "$$js_root" = "." ]; then js_tag="javascript"; else js_tag="javascript:$$js_root"; fi; \
+			if ! install_project_deps javascript "$$js_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag:install\","; \
+			elif ! run_project_setup "$$js_root"; then \
+				overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag:setup\","; \
+			elif find "$$js_root" \( -name '*.test.*' -o -name '*.spec.*' \) -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null | grep -q .; then \
+				ran_languages="$${ran_languages}\"$$js_tag\","; \
+				(cd "$$js_root" && vitest run) || { overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$js_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping javascript tests: no *.test.* or *.spec.* files found\",\"language\":\"javascript\",\"root\":\"$$js_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		rs_files=$$(find . -name '*.rs' -not -path './.git/*' -not -path './vendor/*' -not -path './target/*' 2>/dev/null); \
-		if [ -n "$$rs_files" ] && [ -f "Cargo.toml" ]; then \
-			ran_languages="$${ran_languages}\"rust\","; \
-			cargo test --all-targets || { overall_exit=1; failed_languages="$${failed_languages}\"rust\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"rust\","; \
-			echo '{"level":"info","msg":"skipping rust tests: no .rs files or Cargo.toml found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			rs_files=$$(find "$$rust_root" -name '*.rs' -not -path '*/.git/*' -not -path '*/vendor/*' -not -path '*/target/*' 2>/dev/null); \
+			if [ -n "$$rs_files" ] && [ -f "$$rust_root/Cargo.toml" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo test --all-targets) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$rust_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping rust tests: no .rs files or Cargo.toml found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"test\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}],\"skipped\":[$${skipped_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		swift_files=$$(find . -name '*.swift' -not -path './.git/*' -not -path './.build/*' -not -path './DerivedData/*' 2>/dev/null); \
@@ -1133,27 +1273,31 @@ _test: _plugins-load
 # --- _security: language-specific security scanners ---
 _security: _plugins-load
 	@. /opt/devrail/lib/plugin-execute.sh; \
+	. "$${DEVRAIL_LIB:-/opt/devrail/lib}/project-discover.sh"; \
 	start_time=$$(date +%s%3N); \
 	overall_exit=0; \
 	ran_languages=""; \
 	failed_languages=""; \
 	skipped_languages=""; \
 	if [ -n "$(HAS_PYTHON)" ]; then \
-		ran_languages="$${ran_languages}\"python\","; \
-		bandit -r . -q || { overall_exit=1; failed_languages="$${failed_languages}\"python:bandit\","; }; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
-		semgrep --config auto . --quiet 2>/dev/null || { overall_exit=1; failed_languages="$${failed_languages}\"python:semgrep\","; }; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r py_root; do \
+			if [ "$$py_root" = "." ]; then py_tag="python"; else py_tag="python:$$py_root"; fi; \
+			ran_languages="$${ran_languages}\"$$py_tag\","; \
+			(cd "$$py_root" && bandit -r . -q) || { overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag:bandit\","; }; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+			(cd "$$py_root" && semgrep --config auto . --quiet 2>/dev/null) || { overall_exit=1; failed_languages="$${failed_languages}\"$$py_tag:semgrep\","; }; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots python); \
 	fi; \
 	if [ -n "$(HAS_BASH)" ]; then \
 		skipped_languages="$${skipped_languages}\"bash\","; \
@@ -1206,60 +1350,69 @@ _security: _plugins-load
 		fi; \
 	fi; \
 	if [ -n "$(HAS_GO)" ]; then \
-		if [ -f "go.sum" ]; then \
-			ran_languages="$${ran_languages}\"go\","; \
-			govulncheck ./... || { overall_exit=1; failed_languages="$${failed_languages}\"go:govulncheck\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"go\","; \
-			echo '{"level":"info","msg":"skipping govulncheck: no go.sum found","language":"go"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r go_root; do \
+			if [ "$$go_root" = "." ]; then go_tag="go"; else go_tag="go:$$go_root"; fi; \
+			if [ -f "$$go_root/go.sum" ]; then \
+				ran_languages="$${ran_languages}\"$$go_tag\","; \
+				(cd "$$go_root" && govulncheck ./...) || { overall_exit=1; failed_languages="$${failed_languages}\"$$go_tag:govulncheck\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$go_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping govulncheck: no go.sum found\",\"language\":\"go\",\"root\":\"$$go_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots go); \
 	fi; \
 	if [ -n "$(HAS_JAVASCRIPT)" ]; then \
-		if [ -f "package-lock.json" ]; then \
-			ran_languages="$${ran_languages}\"javascript\","; \
-			npm audit --audit-level=moderate || { overall_exit=1; failed_languages="$${failed_languages}\"javascript:npm-audit\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"javascript\","; \
-			echo '{"level":"info","msg":"skipping npm audit: no package-lock.json found","language":"javascript"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r js_root; do \
+			if [ "$$js_root" = "." ]; then js_tag="javascript"; else js_tag="javascript:$$js_root"; fi; \
+			if [ -f "$$js_root/package-lock.json" ]; then \
+				ran_languages="$${ran_languages}\"$$js_tag\","; \
+				(cd "$$js_root" && npm audit --audit-level=moderate) || { overall_exit=1; failed_languages="$${failed_languages}\"$$js_tag:npm-audit\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$js_tag\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping npm audit: no package-lock.json found\",\"language\":\"javascript\",\"root\":\"$$js_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots javascript); \
 	fi; \
 	if [ -n "$(HAS_RUST)" ]; then \
-		if [ -f "Cargo.lock" ]; then \
-			ran_languages="$${ran_languages}\"rust\","; \
-			cargo audit || { overall_exit=1; failed_languages="$${failed_languages}\"rust:cargo-audit\","; }; \
-		else \
-			skipped_languages="$${skipped_languages}\"rust:cargo-audit\","; \
-			echo '{"level":"info","msg":"skipping cargo audit: no Cargo.lock found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
-		if [ -f "deny.toml" ]; then \
-			cargo deny check || { overall_exit=1; failed_languages="$${failed_languages}\"rust:cargo-deny\","; }; \
-		else \
-			echo '{"level":"info","msg":"skipping cargo deny: no deny.toml found","language":"rust"}' >&2; \
-		fi; \
-		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
-			end_time=$$(date +%s%3N); \
-			duration=$$((end_time - start_time)); \
-			echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
-			exit $$overall_exit; \
-		fi; \
+		while IFS= read -r rust_root; do \
+			if [ "$$rust_root" = "." ]; then rust_tag="rust"; else rust_tag="rust:$$rust_root"; fi; \
+			if [ -f "$$rust_root/Cargo.lock" ]; then \
+				ran_languages="$${ran_languages}\"$$rust_tag\","; \
+				(cd "$$rust_root" && cargo audit) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag:cargo-audit\","; }; \
+			else \
+				skipped_languages="$${skipped_languages}\"$$rust_tag:cargo-audit\","; \
+				echo "{\"level\":\"info\",\"msg\":\"skipping cargo audit: no Cargo.lock found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+			if [ -f "$$rust_root/deny.toml" ]; then \
+				(cd "$$rust_root" && cargo deny check) || { overall_exit=1; failed_languages="$${failed_languages}\"$$rust_tag:cargo-deny\","; }; \
+			else \
+				echo "{\"level\":\"info\",\"msg\":\"skipping cargo deny: no deny.toml found\",\"language\":\"rust\",\"root\":\"$$rust_root\"}" >&2; \
+			fi; \
+			if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
+				end_time=$$(date +%s%3N); \
+				duration=$$((end_time - start_time)); \
+				echo "{\"target\":\"security\",\"status\":\"fail\",\"duration_ms\":$$duration,\"languages\":[$${ran_languages%,}],\"failed\":[$${failed_languages%,}]}"; \
+				exit $$overall_exit; \
+			fi; \
+		done < <(discover_project_roots rust); \
 	fi; \
 	if [ -n "$(HAS_SWIFT)" ]; then \
 		skipped_languages="$${skipped_languages}\"swift\","; \

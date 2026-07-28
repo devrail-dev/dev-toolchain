@@ -1,0 +1,4 @@
+languages:
+  - python
+test:
+  install: "pip install --break-system-packages first"

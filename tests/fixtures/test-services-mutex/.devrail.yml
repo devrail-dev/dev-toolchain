@@ -1,0 +1,6 @@
+languages:
+  - python
+docker_network: some-existing-network
+test:
+  services:
+    - postgres:16
