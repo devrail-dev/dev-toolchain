@@ -128,12 +128,21 @@ no_test_services_resources() {
 # first non-zero exit, the same class of bug Story 15.2's review caught
 # in lib/dependency-install.sh's `local rc=$?` after a bare `if...fi`).
 run_make_test() {
-  local ws="$1" logfile="$2"
+  local ws="$1" logfile="$2" rc
   if (cd "$ws" && DEVRAIL_IMAGE="$IMAGE_NAME" DEVRAIL_TAG="$IMAGE_TAG" make test >"$logfile" 2>&1); then
-    echo 0
+    rc=0
   else
-    echo $?
+    rc=$?
   fi
+  # On failure, dump the captured output to stderr (not stdout — this
+  # function's stdout is captured via $(...) as the exit code) so a CI
+  # failure shows the real error instead of just a PASS/FAIL summary.
+  if [ "$rc" -ne 0 ]; then
+    echo "--- make test output (${logfile}), exit ${rc} ---" >&2
+    cat "$logfile" >&2
+    echo "--- end output ---" >&2
+  fi
+  echo "$rc"
 }
 
 echo "==> postgres:16 alone — real query through the injected DATABASE_URL"
