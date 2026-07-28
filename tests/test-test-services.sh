@@ -252,7 +252,21 @@ echo "==> mid-flight SIGKILL leaves orphaned resources; the next run detects and
 KILL_WS="$(workspace_for test-services-pg-redis)"
 (cd "$KILL_WS" && DEVRAIL_IMAGE="$IMAGE_NAME" DEVRAIL_TAG="$IMAGE_TAG" make test >"${WORKDIR}/kill1.log" 2>&1) &
 KILL_PID=$!
-sleep 3
+# Wait for actual evidence a service container exists, not a fixed sleep —
+# a fixed sleep (this used `sleep 3`) is calibrated to one machine's Docker
+# overhead (host-bin extraction into a brand-new, cache-empty KILL_WS: a
+# docker create + 2 docker cp + docker rm round trip, then network create +
+# container start) and goes flaky the moment CI's runner is slower or
+# faster than whatever machine picked the number (caught for real: this
+# passed locally every time but failed in GitHub Actions CI, where the
+# kill fired before any devrail-test-* resource existed yet — killing
+# during the extraction/build phase leaves nothing to orphan, so the very
+# assertion this case exists to prove never got a chance to be true).
+elapsed=0
+while [ "$(no_test_services_resources)" = "true" ] && [ "$elapsed" -lt 60 ]; do
+  sleep 1
+  elapsed=$((elapsed + 1))
+done
 # Kill the backgrounded `make test` process itself, not its process
 # group — a non-interactive script doesn't get a separate pgid per
 # background job, so a group-kill here would take out this script too
