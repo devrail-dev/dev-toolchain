@@ -258,33 +258,69 @@ fi
 assert_true "$(no_test_services_resources)" "unsupported/nothing-started"
 
 echo "==> mid-flight SIGKILL leaves orphaned resources; the next run detects and cleans them up"
+#
+# This case simulates: services are up, `make test` is mid-run, and
+# something kills it (crash, OOM, a cancelled CI job). Getting the kill
+# right took several iterations, each fixing a real bug this test itself
+# either had or exposed — see git history on this file/scripts/test-
+# services.sh for the full trail. The mechanics settled on:
+#
+# 1. `(cd DIR && ENV=x make test >log 2>&1) &` does NOT tail-call-exec
+#    into `make` — confirmed with a standalone repro. The backgrounded
+#    subshell (KILL_PID) stays alive as a distinct waiting parent, and
+#    `make` runs as ITS OWN child with a separate PID. Killing only
+#    KILL_PID kills nothing that matters: `make` is simply orphaned,
+#    unharmed, and runs to completely normal completion — nothing about
+#    the scenario was actually being simulated. `make`'s real PID has to
+#    be found (`pgrep -P "$KILL_PID"`) and killed directly.
+# 2. The kill must land only after `_up()` has fully finished for every
+#    declared service (both DATABASE_URL and REDIS_URL present in the env
+#    file) — not merely after a container/network first appears. Earlier
+#    while `_up()` itself is still starting the second service, killing
+#    `make` orphans `_up()`'s own still-running child process instead of
+#    the downstream test-runner container: no `make` survives to ever set
+#    test:'s cleanup trap, so whatever `_up()` eventually finishes writing
+#    is never tracked by anything and becomes a permanent, untracked leak.
+# 3. Once `make` is genuinely killed after `_up()` has finished, its
+#    already-running recipe shell (with test:'s EXIT trap already armed)
+#    is itself orphaned but keeps running — this is the actual, intended
+#    AC 8 scenario, and scripts/test-services.sh's run_id-checked `down`
+#    handles it correctly (verified separately, see that script's tests).
+# 4. What run_id-checked `down` does NOT and structurally cannot do:
+#    reclaim the *foreground* `docker run --rm ... make _test` container
+#    orphaned make(A) was running — untracked, unnamed, invisible to
+#    test-services.sh (which only ever tracks the service containers).
+#    That container keeps running for real (pip install + pytest against
+#    now force-removed services) until it fails and exits on its own,
+#    holding the old network's last reference the whole time — not a
+#    race, a real "this network still has an active member", and can
+#    take well over a minute under this suite's own back-to-back docker
+#    load. A real crash leaves the same straggler and nobody needs it
+#    gone instantly; only this test's own need for a fast, deterministic
+#    "everything's clean" check makes it worth reaping explicitly below,
+#    the same way real incident recovery would (force-remove whatever's
+#    still attached, don't wait it out).
 KILL_WS="$(workspace_for test-services-pg-redis)"
 (cd "$KILL_WS" && DEVRAIL_IMAGE="$IMAGE_NAME" DEVRAIL_TAG="$IMAGE_TAG" make test >"${WORKDIR}/kill1.log" 2>&1) &
 KILL_PID=$!
-# Wait for actual evidence a service container exists, not a fixed sleep —
-# a fixed sleep (this used `sleep 3`) is calibrated to one machine's Docker
-# overhead (host-bin extraction into a brand-new, cache-empty KILL_WS: a
-# docker create + 2 docker cp + docker rm round trip, then network create +
-# container start) and goes flaky the moment CI's runner is slower or
-# faster than whatever machine picked the number (caught for real: this
-# passed locally every time but failed in GitHub Actions CI, where the
-# kill fired before any devrail-test-* resource existed yet — killing
-# during the extraction/build phase leaves nothing to orphan, so the very
-# assertion this case exists to prove never got a chance to be true).
 elapsed=0
-while [ "$(no_test_services_resources)" = "true" ] && [ "$elapsed" -lt 60 ]; do
+env_ready() {
+  [ -f "${KILL_WS}/.devrail/test-services/env" ] &&
+    grep -q "DATABASE_URL=" "${KILL_WS}/.devrail/test-services/env" 2>/dev/null &&
+    grep -q "REDIS_URL=" "${KILL_WS}/.devrail/test-services/env" 2>/dev/null
+}
+while ! env_ready && [ "$elapsed" -lt 60 ]; do
   sleep 1
   elapsed=$((elapsed + 1))
 done
-# Kill the backgrounded `make test` process itself, not its process
-# group — a non-interactive script doesn't get a separate pgid per
-# background job, so a group-kill here would take out this script too
-# (confirmed the hard way: the whole test suite died mid-run the first
-# time this used `kill -- -$PGID`). Killing just the PID is also the more
-# realistic simulation: a docker container already started with `-d` is
-# detached and keeps running even after its parent `make`/script process
-# is gone, which is exactly the orphan scenario AC 8 needs to reproduce.
-kill -9 "$KILL_PID" 2>/dev/null || true
+# Captured now (point 4 above) so it can be explicitly reaped after the
+# rerun, rather than relying on an open-ended wait for it to free itself.
+OLD_NETWORK="$(cat "${KILL_WS}/.devrail/test-services/network" 2>/dev/null || true)"
+# Not a process-group kill — a non-interactive script doesn't get a
+# separate pgid per background job, so `kill -- -$PGID` here took out this
+# whole test script the first time it was tried.
+MAKE_PID="$(pgrep -P "$KILL_PID" | head -1)"
+kill -9 "${MAKE_PID:-$KILL_PID}" "$KILL_PID" 2>/dev/null || true
 sleep 1
 assert_true "$([ "$(no_test_services_resources)" = "false" ] && echo true || echo false)" "sigkill/orphan-actually-left-behind"
 
@@ -296,6 +332,18 @@ if grep -q "leftover test-services state" "${WORKDIR}/kill2.log"; then
 else
   echo "FAIL [sigkill/stale-state-detected-and-cleaned]: expected the rerun to log a leftover-state cleanup" >&2
   FAIL=$((FAIL + 1))
+fi
+# Explicit reap of A's old network — see point 4 in the comment above.
+if [ -n "${OLD_NETWORK:-}" ]; then
+  docker network inspect "${OLD_NETWORK}" --format '{{range $k, $v := .Containers}}{{$k}} {{end}}' 2>/dev/null |
+    xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker network rm "${OLD_NETWORK}" >/dev/null 2>&1 || true
+fi
+if [ "$(no_test_services_resources)" != "true" ]; then
+  echo "DEBUG leftover containers:" >&2
+  docker ps -a --filter "name=devrail-test-" --format '{{.Names}}\t{{.Status}}\t{{.CreatedAt}}' >&2
+  echo "DEBUG leftover networks:" >&2
+  docker network ls --filter "name=devrail-test-" --format '{{.Name}}' >&2
 fi
 assert_true "$(no_test_services_resources)" "sigkill/final-teardown-clean"
 

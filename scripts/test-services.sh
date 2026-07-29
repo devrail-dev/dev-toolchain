@@ -150,11 +150,25 @@ _down() {
   fi
 
   if [[ -f "${STATE_DIR}/network" ]]; then
-    local network
+    local network attempt
     network="$(cat "${STATE_DIR}/network")"
-    if ! docker network rm "${network}" >/dev/null 2>&1; then
-      log_warn "could not remove network '${network}' (already gone?)"
-    fi
+    # Retry a few times before giving up: `docker network rm` right after
+    # `docker rm -f` on its last attached container can transiently fail
+    # ("has active endpoints") even though the container is already gone
+    # from `docker ps` — Docker updates the network's endpoint list
+    # asynchronously, on a short lag behind container removal. Reproduced
+    # for real: an immediate single attempt left an empty, harmless-but-
+    # never-cleaned-up network behind on a meaningful fraction of runs.
+    for attempt in 1 2 3 4 5; do
+      if docker network rm "${network}" >/dev/null 2>&1; then
+        break
+      fi
+      if [[ "${attempt}" -eq 5 ]]; then
+        log_warn "could not remove network '${network}' after ${attempt} attempts (already gone, or still has an attached container?)"
+      else
+        sleep 0.5
+      fi
+    done
   fi
 
   rm -rf "${STATE_DIR}"
