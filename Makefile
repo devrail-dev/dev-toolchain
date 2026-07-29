@@ -350,11 +350,12 @@ security: _ensure-host-cache _extended-image ## Run language-specific security s
 	$(DOCKER_RUN) make _security
 
 test: _ensure-host-cache _extended-image _test-services-up ## Run validation tests
-	@trap '\
+	@run_id="$$(cat .devrail/test-services/run_id 2>/dev/null || true)"; \
+	trap '\
 		if [ -f scripts/test-services.sh ]; then \
-			bash scripts/test-services.sh down; \
+			bash scripts/test-services.sh down "$$run_id"; \
 		elif [ -f .devrail/host-bin/scripts/test-services.sh ]; then \
-			DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" bash .devrail/host-bin/scripts/test-services.sh down; \
+			DEVRAIL_LIB="$$(pwd)/.devrail/host-bin/lib" bash .devrail/host-bin/scripts/test-services.sh down "$$run_id"; \
 		fi \
 	' EXIT; \
 	$(DOCKER_RUN) make _test

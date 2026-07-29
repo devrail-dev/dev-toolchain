@@ -9,8 +9,8 @@
 #          would be a real privilege-escalation surface the feature does
 #          not need).
 #
-# Usage:   bash scripts/test-services.sh up      # called by _test-services-up
-#          bash scripts/test-services.sh down    # called by test:'s cleanup trap
+# Usage:   bash scripts/test-services.sh up                # called by _test-services-up
+#          bash scripts/test-services.sh down [run_id]      # called by test:'s cleanup trap
 #
 # Contract:
 #   - `up` reads `.devrail.yml` `test.services` (list of `postgres:<tag>` /
@@ -25,9 +25,14 @@
 #     starting fresh.
 #   - Writes state under `.devrail/test-services/`: `network` (name),
 #     `containers` (one name per line), `env` (KEY=VALUE lines, consumed
-#     via `docker run --env-file`).
-#   - `down` tears down every tracked container and the tracked network,
-#     then removes the state dir. No-op if the state dir doesn't exist.
+#     via `docker run --env-file`), `run_id` (unique per `up` invocation).
+#   - `down [run_id]` tears down every tracked container and the tracked
+#     network, then removes the state dir. No-op if the state dir doesn't
+#     exist. When `run_id` is given, `down` first checks it still matches
+#     `run_id` on disk — if a newer `up` has since overwritten the state
+#     (see _down's own comment for why this happens even for a single
+#     SIGKILL), it skips removal instead of tearing down a live sibling
+#     run's resources.
 #
 # Supported services: `postgres:<tag>` (injects DATABASE_URL), `redis:<tag>`
 # (injects REDIS_URL). Anything else is a hard error — no silent partial
@@ -101,9 +106,37 @@ _wait_ready() {
 # removal failures are logged and skipped, not fatal — a container that's
 # already gone (or a network with a lingering endpoint from a container
 # docker itself hasn't reaped yet) shouldn't block cleaning up the rest.
+#
+# expected_run_id (optional, $1): when given, _down refuses to remove
+# anything unless STATE_DIR/run_id still matches it. This exists because
+# SIGKILL only kills the one PID it targets — a `make test` process's own
+# children (in particular the foreground `docker run --rm ... make _test`
+# test-runner container) are orphaned, not killed, and keep running to
+# completion invisibly. When that orphaned run's own EXIT trap eventually
+# fires `down`, STATE_DIR may by then belong to an entirely different,
+# still-in-progress `make test` invocation in the same checkout (its
+# stale-state self-heal already overwrote it) — without this check, the
+# orphaned trap tears down a live sibling run's containers mid-test.
+# Reproduced for real: this exact race caused DNS resolution failures
+# ("Temporary failure in name resolution") for a rerun immediately
+# following a SIGKILL'd run in CI. Internal self-calls (stale-state
+# cleanup, ready-timeout cleanup) intentionally omit this and keep
+# unconditional teardown semantics — the trap-invoked call is the only
+# one that needs to ask "is this still mine?"
 _down() {
+  local expected_run_id="${1:-}"
+
   if [[ ! -d "${STATE_DIR}" ]]; then
     return 0
+  fi
+
+  if [[ -n "${expected_run_id}" && -f "${STATE_DIR}/run_id" ]]; then
+    local current_run_id
+    current_run_id="$(cat "${STATE_DIR}/run_id")"
+    if [[ "${current_run_id}" != "${expected_run_id}" ]]; then
+      log_warn "test-services state now belongs to a newer run (expected '${expected_run_id}', found '${current_run_id}') — not tearing it down"
+      return 0
+    fi
   fi
 
   if [[ -f "${STATE_DIR}/containers" ]]; then
@@ -175,6 +208,7 @@ _up() {
   mkdir -p "${STATE_DIR}"
   local suffix network
   suffix="$(date +%s)-$$"
+  echo "${suffix}" >"${STATE_DIR}/run_id"
   network="devrail-test-${suffix}"
   docker network create "${network}" >/dev/null
   echo "${network}" >"${STATE_DIR}/network"
@@ -223,7 +257,7 @@ _up() {
 
 case "${subcommand}" in
 up) _up ;;
-down) _down ;;
+down) _down "${2:-}" ;;
 *)
   log_error "unknown subcommand '${subcommand}' — expected 'up' or 'down'" 2
   exit 2
