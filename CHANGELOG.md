@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.10] - 2026-07-30
+
 ### Added
 
 - **Issue #53 (Story 15.1):** `make lint`/`format`/`fix`/`test`/`security`
