@@ -25,7 +25,7 @@ source "${DEVRAIL_LIB}/platform.sh"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   log_info "install-ansible.sh — Install Ansible tooling for DevRail"
   log_info "Usage: bash scripts/install-ansible.sh [--help]"
-  log_info "Tools: ansible-lint, molecule"
+  log_info "Tools: ansible-lint, molecule, openssh-client"
   exit 0
 fi
 
@@ -41,6 +41,16 @@ trap cleanup EXIT
 # --- Main ---
 
 log_info "Starting Ansible tooling installation"
+
+# Install SSH client (required by ansible-core's default connection plugin)
+if command -v ssh &>/dev/null; then
+  log_info "openssh-client is already installed, skipping"
+else
+  log_info "Installing openssh-client (required for ansible-core SSH transport)"
+  apt-get update -qq && apt-get install -y -qq --no-install-recommends openssh-client
+  rm -rf /var/lib/apt/lists/*
+  log_info "openssh-client installed successfully"
+fi
 
 # Ensure pip is available
 require_cmd "python3" "python3 is required but not found"

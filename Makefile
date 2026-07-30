@@ -527,24 +527,7 @@ _lint: _plugins-load
 	fi; \
 	if [ -n "$(HAS_ANSIBLE)" ]; then \
 		ran_languages="$${ran_languages}\"ansible\","; \
-		if [ -z "$${ANSIBLE_ROLES_PATH:-}" ]; then \
-			for _acfg in ansible.cfg ansible/ansible.cfg; do \
-				if [ -f "$$_acfg" ]; then \
-					_rdir=$$(grep -E '^\s*roles_path\s*=' "$$_acfg" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' '); \
-					if [ -n "$$_rdir" ]; then \
-						_cdir=$$(dirname "$$_acfg"); \
-						if [ "$$_cdir" != "." ]; then \
-							export ANSIBLE_ROLES_PATH="$$_cdir/$$_rdir"; \
-						else \
-							export ANSIBLE_ROLES_PATH="$$_rdir"; \
-						fi; \
-						echo "{\"level\":\"info\",\"msg\":\"auto-detected ANSIBLE_ROLES_PATH=$${ANSIBLE_ROLES_PATH}\",\"language\":\"ansible\"}" >&2; \
-						break; \
-					fi; \
-				fi; \
-			done; \
-		fi; \
-		ansible-lint || { overall_exit=1; failed_languages="$${failed_languages}\"ansible\","; }; \
+		run_per_project ansible "ansible-lint" || { overall_exit=1; failed_languages="$${failed_languages}\"ansible\","; }; \
 		if [ "$(DEVRAIL_FAIL_FAST)" = "1" ] && [ $$overall_exit -ne 0 ]; then \
 			end_time=$$(date +%s%3N); \
 			duration=$$((end_time - start_time)); \
