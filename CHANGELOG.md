@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Install gitleaks from official release binaries (linux amd64/arm64) instead
+  of `go install` under QEMU, which failed the 2026-08-31 multi-arch scheduled
+  build (run 33391871123, issue #60). Checksums are verified against the
+  upstream release `checksums.txt`.
+
 ## [1.12.10] - 2026-07-30
 
 ### Added

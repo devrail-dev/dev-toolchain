@@ -14,10 +14,27 @@ RUN go install github.com/terraform-linters/tflint@latest
 # Install terraform-docs
 RUN go install github.com/terraform-docs/terraform-docs@latest
 
-# Install gitleaks (pin version + inject via ldflags so `gitleaks version` reports correctly)
+# Install gitleaks from official release binaries.
+# Compiling via `go install` under QEMU for linux/arm64 OOMs/fails the
+# multi-arch GHCR build (2026-08-31 run 33391871123 / issue #60). Official
+# binaries are already version-stamped; checksums come from the release.
 ARG GITLEAKS_VERSION=v8.30.0
-RUN go install -ldflags "-X github.com/zricethezav/gitleaks/v8/version.Version=${GITLEAKS_VERSION}" \
-    github.com/zricethezav/gitleaks/v8@${GITLEAKS_VERSION}
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) _arch=x64 ;; \
+      arm64) _arch=arm64 ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
+    esac; \
+    _ver="${GITLEAKS_VERSION#v}"; \
+    _base="https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}"; \
+    _tar="gitleaks_${_ver}_linux_${_arch}.tar.gz"; \
+    mkdir -p /go/bin; \
+    curl -fsSL -o "/tmp/${_tar}" "${_base}/${_tar}"; \
+    curl -fsSL -o /tmp/gitleaks_checksums.txt "${_base}/gitleaks_${_ver}_checksums.txt"; \
+    grep " ${_tar}\$" /tmp/gitleaks_checksums.txt | (cd /tmp && sha256sum -c -); \
+    tar -xz -C /go/bin --no-same-owner -f "/tmp/${_tar}" gitleaks; \
+    rm -f "/tmp/${_tar}" /tmp/gitleaks_checksums.txt; \
+    /go/bin/gitleaks version
 
 # Install golangci-lint v2
 RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
