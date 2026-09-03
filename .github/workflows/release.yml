@@ -1,9 +1,19 @@
 name: Release
 
+# Tag pushes from a human/PAT fire this via `push`. Scheduled auto-version
+# tags are created with GITHUB_TOKEN, which GitHub will not use to start a
+# new workflow — build.yml calls this via workflow_call after a successful
+# image push instead.
 on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_call:
+    inputs:
+      tag:
+        description: Semver git tag to release (e.g. v1.12.16)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -21,10 +31,14 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ inputs.tag || github.ref_name }}"
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Refusing non-semver tag: ${TAG}"
+            exit 1
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          echo "major=v$(echo "${TAG#v}" | cut -d. -f1)" >> "$GITHUB_OUTPUT"
+          echo "major=$(echo "${TAG#v}" | cut -d. -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -41,7 +55,7 @@ jobs:
             docker pull ghcr.io/devrail-dev/dev-toolchain:${{ steps.version.outputs.version }}
 
             # Major version (floating, always latest v${{ steps.version.outputs.major }}.x.x)
-            docker pull ghcr.io/devrail-dev/dev-toolchain:${{ steps.version.outputs.major }}
+            docker pull ghcr.io/devrail-dev/dev-toolchain:v${{ steps.version.outputs.major }}
             ```
 
             ## Verify Image Signature
@@ -57,8 +71,8 @@ jobs:
 
       - name: Update major version tag
         run: |
-          MAJOR_TAG="${{ steps.version.outputs.major }}"
-          git tag -f "${MAJOR_TAG}"
+          MAJOR_TAG="v${{ steps.version.outputs.major }}"
+          git tag -f "${MAJOR_TAG}" "${{ steps.version.outputs.tag }}"
           git push origin "${MAJOR_TAG}" --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

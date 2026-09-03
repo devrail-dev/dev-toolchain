@@ -173,9 +173,11 @@ Once the tag is pushed to origin, GitHub Actions handles everything:
 2. **release.yml** -- Creates a GitHub Release with auto-generated release notes and updates the `v1` floating tag
 3. **build.yml (version-manifest)** -- Generates `tool-versions.json` from the published container and attaches it to the release
 
+Human/PAT tag pushes (`make release`) trigger `release.yml` via `on: push`. Weekly cron and `workflow_dispatch` create the tag with `GITHUB_TOKEN`, which GitHub will not use to start a new workflow — `build.yml` therefore calls `release.yml` via `workflow_call` after the image push succeeds, then `version-manifest` attaches `tool-versions.json`.
+
 ### Routine Rebuilds
 
-Weekly Monday builds require no manual action. The `auto-version` job in `build.yml` finds the latest tag, bumps the patch version, and triggers the full build+release pipeline. This keeps tool versions current without manual intervention.
+Weekly Monday builds require no manual action. The `auto-version` job in `build.yml` finds the latest tag, bumps the patch version, publishes the image, creates the GitHub Release, and attaches `tool-versions.json`. This keeps tool versions current without manual intervention.
 
 <!-- devrail:coding-practices -->
 
