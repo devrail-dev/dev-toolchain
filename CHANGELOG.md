@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `go install` under QEMU, which failed the 2026-08-31 multi-arch scheduled
   build (run 33391871123, issue #60). Checksums are verified against the
   upstream release `checksums.txt`.
+- Weekly/`workflow_dispatch` auto-version tags now get a GitHub Release and
+  `tool-versions.json`. `GITHUB_TOKEN` tag pushes cannot start `release.yml`,
+  so `build.yml` calls it via `workflow_call` after a successful image push.
+  Release notes no longer render the floating tag as `vv1`.
 
 ## [1.12.10] - 2026-07-30
 
