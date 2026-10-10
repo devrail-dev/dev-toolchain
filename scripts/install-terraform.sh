@@ -115,8 +115,8 @@ else
   OS="$(get_os)"
 
   # Fetch the latest terragrunt version from GitHub API
-  TERRAGRUNT_VERSION=$(curl -s https://api.github.com/repos/gruntwork-io/terragrunt/releases/latest | jq -r '.tag_name' | sed 's/^v//')
-  if is_empty "${TERRAGRUNT_VERSION}"; then
+  TERRAGRUNT_VERSION=$(curl -fsSL https://api.github.com/repos/gruntwork-io/terragrunt/releases/latest | jq -r '.tag_name // empty' | sed 's/^v//')
+  if is_empty "${TERRAGRUNT_VERSION}" || [[ ! "${TERRAGRUNT_VERSION}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
     log_warn "Could not determine latest terragrunt version, using fallback"
     TERRAGRUNT_VERSION="0.99.4"
   fi
