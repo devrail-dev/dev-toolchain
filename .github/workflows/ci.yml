@@ -42,6 +42,9 @@ jobs:
             bash /opt/devrail/scripts/report-tool-versions.sh \
             | jq .
 
+      - name: Terragrunt version fallback regression
+        run: bash tests/test-install-terraform-terragrunt-version.sh
+
       # Phase 2c: Rails 7+ consumer smoke test (issue #25)
       # Verifies the image is consumable by modern Rails projects:
       #   - Gemfile with `platforms: %i[mri windows]` parses (needs Bundler 2.6+).
