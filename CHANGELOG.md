@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bump the Go builder image to `golang:1.26-bookworm` so
+  `govulncheck` runs with the patched Go standard library required by
+  downstream Go projects.
+
 ### Fixed
 
 - Install gitleaks from official release binaries (linux amd64/arm64) instead
