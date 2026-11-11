@@ -65,7 +65,7 @@ RUN cargo binstall --no-confirm cargo-audit cargo-deny
 
 # === Swift builder stage ===
 # Builds swift-format and SwiftLint from source (no pre-built arm64 Linux binaries)
-FROM swift:6.1-bookworm AS swift-builder
+FROM swift:6.4-bookworm AS swift-builder
 RUN git clone --depth 1 --branch 602.0.0 https://github.com/swiftlang/swift-format.git /tmp/swift-format \
     && cd /tmp/swift-format \
     && swift build -c release \
