@@ -91,7 +91,7 @@ RUN bash /opt/devrail/scripts/install-ruby.sh
 
 # === JDK builder stage ===
 # Provides JDK 21 for Kotlin tooling (ktlint, detekt, Gradle)
-FROM eclipse-temurin:21-jdk AS jdk-builder
+FROM eclipse-temurin:25-jdk AS jdk-builder
 
 # === Node.js base: provides Node runtime for JS/TS tooling ===
 FROM node:22-bookworm-slim AS node-base
