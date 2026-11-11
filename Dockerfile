@@ -81,7 +81,7 @@ RUN git clone --depth 1 --branch 0.58.0 https://github.com/realm/SwiftLint.git /
 # Provides Ruby 3.4 toolchain plus installed gems (rubocop, reek, brakeman,
 # bundler-audit, rspec, sorbet). Debian bookworm ships Ruby 3.1 which cannot
 # parse modern Rails 7+ Gemfiles (`platforms: %i[mri windows]`) — see #25.
-FROM ruby:3.4-slim-bookworm AS ruby-builder
+FROM ruby:4.0-slim-bookworm AS ruby-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential git \
     && rm -rf /var/lib/apt/lists/*
